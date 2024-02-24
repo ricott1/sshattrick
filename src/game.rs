@@ -126,7 +126,7 @@ fn base_image(palette: Palette) -> RgbaImage {
 fn skate_trace_color(palette: Palette) -> Rgba<u8> {
     match palette {
         Palette::Dark => Rgba([55, 55, 85, 255]),
-        Palette::Light => Rgba([195, 195, 255, 255]),
+        Palette::Light => Rgba([145, 215, 255, 255]),
         Palette::Basket => Rgba([55, 55, 85, 255]),
         Palette::Alt => Rgba([105, 55, 55, 255]),
     }
@@ -1548,7 +1548,7 @@ impl Game {
 
         let (color_1, color_2) = match palette {
             Palette::Dark => (Color::Cyan, Color::White),
-            Palette::Light => (Color::DarkGray, Color::Black),
+            Palette::Light => (Color::DarkGray, Color::Gray),
             Palette::Basket => (Color::Magenta, Color::LightMagenta),
             Palette::Alt => (Color::Green, Color::Red),
         };
