@@ -275,6 +275,7 @@ impl Handler for GameServer {
                     || (pending_client.is_some() && pending_client.unwrap() != self.client_id)
                 {
                     session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+                    session.close(channel);
                 }
             }
         }
@@ -283,6 +284,7 @@ impl Handler for GameServer {
             self.clients.lock().await.remove(&self.client_id);
             self.clients_to_game.lock().await.remove(&self.client_id);
             session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+            session.close(channel);
             let mut pending_client = self.pending_client.lock().await;
             if pending_client.is_some() && pending_client.unwrap() == self.client_id {
                 *pending_client = None;
