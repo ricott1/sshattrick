@@ -1,6 +1,6 @@
 use crate::{
     game::Game,
-    types::{AppResult, SshTerminal, TerminalHandle},
+    types::{AppResult, TerminalHandle},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -12,12 +12,14 @@ use std::{
     fs::File,
     io::{Read, Write},
     sync::Arc,
+    time::Instant,
 };
 use tokio::sync::Mutex;
 
-const GAME_NAME: &str = "Rustrick";
+const GAME_NAME: &str = "ssHattrick";
 const TERMINAL_WIDTH: u16 = 160;
 const TERMINAL_HEIGHT: u16 = 50;
+const INACTIVITY_TIMEOUT: u64 = 10;
 
 pub fn save_keys(signing_key: &ed25519_dalek::SigningKey) -> AppResult<()> {
     let file = File::create::<&str>("./keys".into())?;
@@ -54,11 +56,11 @@ fn convert_data_to_key_code(data: &[u8]) -> crossterm::event::KeyCode {
 
 #[derive(Clone)]
 pub struct GameServer {
-    clients: Arc<Mutex<HashMap<usize, SshTerminal>>>,
+    clients: Arc<Mutex<HashMap<usize, TerminalHandle>>>,
     clients_to_game: Arc<Mutex<HashMap<usize, uuid::Uuid>>>,
     client_id: usize,
     games: Arc<Mutex<HashMap<uuid::Uuid, Game>>>,
-    pending_client: Arc<Mutex<Option<usize>>>,
+    pending_client: Arc<Mutex<Option<(usize, Instant)>>>,
 }
 
 impl GameServer {
@@ -77,6 +79,7 @@ impl GameServer {
         let games = self.games.clone();
         let clients = self.clients.clone();
         let clients_to_game = self.clients_to_game.clone();
+        let pending_client = self.pending_client.clone();
         log::info!("Starting game loop");
         // TODO (maybe): spawn a new loop for each game. Not sure it's a good idea actually
         // To close the loop, check if both are disconnected or the game is over.
@@ -100,10 +103,35 @@ impl GameServer {
                     let (game_id, (red_client_id, blue_client_id)) = ids;
                     log::info!("Removing game {game_id}");
                     games.lock().await.remove(&game_id);
-                    clients.lock().await.remove(&red_client_id);
-                    clients.lock().await.remove(&blue_client_id);
+
+                    if let Some(red_handle) = clients.lock().await.get(&red_client_id) {
+                        red_handle
+                            .close()
+                            .await
+                            .unwrap_or_else(|_| log::error!("Failed to close blue client handle."));
+                        clients.lock().await.remove(&red_client_id);
+                    }
+
+                    if let Some(blue_handle) = clients.lock().await.get(&blue_client_id) {
+                        blue_handle
+                            .close()
+                            .await
+                            .unwrap_or_else(|_| log::error!("Failed to close blue client handle."));
+                        clients.lock().await.remove(&blue_client_id);
+                    }
+
                     clients_to_game.lock().await.remove(&red_client_id);
                     clients_to_game.lock().await.remove(&blue_client_id);
+                }
+
+                // Remove pending client if it's been waiting for too long
+                let mut pending_client = pending_client.lock().await;
+                if let Some((pending_id, instant)) = pending_client.clone() {
+                    if instant.elapsed().as_secs() > INACTIVITY_TIMEOUT {
+                        log::info!("Pending client connection timed out");
+                        clients.lock().await.remove(&pending_id);
+                        *pending_client = None;
+                    }
                 }
             }
         });
@@ -120,7 +148,7 @@ impl GameServer {
         let key_pair = KeyPair::Ed25519(signing_key);
 
         let config = Config {
-            inactivity_timeout: Some(std::time::Duration::from_secs(10)),
+            inactivity_timeout: Some(std::time::Duration::from_secs(INACTIVITY_TIMEOUT)),
             auth_rejection_time: std::time::Duration::from_secs(3),
             auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
             keys: vec![key_pair],
@@ -184,12 +212,22 @@ impl Handler for GameServer {
             let mut pending_client_id = self.pending_client.lock().await;
 
             if pending_client_id.is_some() {
-                let client_id = pending_client_id.as_ref().unwrap().clone();
-                let pending_terminal = clients
-                    .get(&client_id)
-                    .ok_or(anyhow::anyhow!("Client not found in clients list"))?;
+                let client_id = pending_client_id.as_ref().unwrap().0.clone();
+                let pending_handle = clients.get(&client_id).unwrap();
+                let backend = CrosstermBackend::new(pending_handle.clone());
+                let pending_terminal = Terminal::with_options(
+                    backend,
+                    ratatui::TerminalOptions {
+                        viewport: ratatui::Viewport::Fixed(Rect {
+                            x: 0,
+                            y: 0,
+                            width: TERMINAL_WIDTH,
+                            height: TERMINAL_HEIGHT,
+                        }),
+                    },
+                )?;
                 let game = Game::new(
-                    (client_id.clone(), pending_terminal.clone()),
+                    (client_id.clone(), pending_terminal),
                     (self.client_id, terminal),
                 );
 
@@ -205,16 +243,16 @@ impl Handler for GameServer {
                 );
                 *pending_client_id = None;
             } else {
-                clients.insert(self.client_id, terminal);
-                *pending_client_id = Some(self.client_id);
+                *pending_client_id = Some((self.client_id, Instant::now()));
                 log::info!("Added player to pending list");
                 terminal_handle.message(
                     format!(
-                        "Welcome to the {GAME_NAME}! There are {} games running.\r\nWaiting for another player to join...\r\nIn the meanwhile, remember to set your terminal to a minimum of {TERMINAL_WIDTH}x{TERMINAL_HEIGHT} characters.\r\n\r\nPress Esc to close the game.",
+                        "Welcome to the {GAME_NAME}! There are {} games running.\r\nWaiting for another player to join...\r\nIn the meanwhile, remember to set your terminal to a minimum of {TERMINAL_WIDTH}x{TERMINAL_HEIGHT} characters.\r\n\r\nPress Esc to close the game. Your connection will be closed after {INACTIVITY_TIMEOUT} seconds of inactivity.\r\n",
                         self.clients_to_game.lock().await.len()
                     )
                     .as_str(),
                 )?;
+                clients.insert(self.client_id, terminal_handle);
             }
         }
 
@@ -271,16 +309,17 @@ impl Handler for GameServer {
         if key_code == KeyCode::Esc {
             self.clients.lock().await.remove(&self.client_id);
             self.clients_to_game.lock().await.remove(&self.client_id);
+            session.eof(channel);
             session.close(channel);
-            session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
-            if pending_client.is_some() && pending_client.unwrap() == self.client_id {
+            // session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+            if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
                 *pending_client = None;
                 log::info!("Removed player from pending list");
             }
             return Ok(());
         }
 
-        if pending_client.is_some() && pending_client.unwrap() == self.client_id {
+        if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
             return Ok(());
         }
 
@@ -293,8 +332,9 @@ impl Handler for GameServer {
 
         self.clients.lock().await.remove(&self.client_id);
         self.clients_to_game.lock().await.remove(&self.client_id);
+        session.eof(channel);
         session.close(channel);
-        session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+        // session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
 
         Ok(())
     }

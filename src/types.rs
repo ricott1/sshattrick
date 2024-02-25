@@ -77,6 +77,16 @@ impl TerminalHandle {
         }
     }
 
+    pub async fn close(&self) -> Result<(), ()> {
+        self.handle.close(self.channel_id).await?;
+        Ok(())
+    }
+
+    pub async fn eof(&self) -> Result<(), ()> {
+        self.handle.eof(self.channel_id).await?;
+        Ok(())
+    }
+
     pub fn message(&mut self, text: &str) -> std::io::Result<()> {
         let crypto_vec = CryptoVec::from_slice(text.as_bytes());
         self.write(crypto_vec.as_ref())?;
