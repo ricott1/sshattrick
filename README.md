@@ -1,6 +1,6 @@
 # ssHattrick
 
-[Watch the demo](./demo.gif)
+![Watch the demo](./demo.gif)
 
 ssHattrick is a multiplayer game that you can play over SSH. It is a clone of the popular game [Hattrick](https://www.retrogames.cz/play_1368-Atari7800.php).
 
