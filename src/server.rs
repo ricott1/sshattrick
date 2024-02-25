@@ -120,7 +120,7 @@ impl GameServer {
         let key_pair = KeyPair::Ed25519(signing_key);
 
         let config = Config {
-            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            inactivity_timeout: Some(std::time::Duration::from_secs(10)),
             auth_rejection_time: std::time::Duration::from_secs(3),
             auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
             keys: vec![key_pair],
@@ -272,8 +272,8 @@ impl Handler for GameServer {
                 if pending_client.is_none()
                     || (pending_client.is_some() && pending_client.unwrap() != self.client_id)
                 {
-                    session.close(channel);
                     session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+                    session.close(channel);
                 }
             }
         }
@@ -281,8 +281,8 @@ impl Handler for GameServer {
         if key_code == KeyCode::Esc {
             self.clients.lock().await.remove(&self.client_id);
             self.clients_to_game.lock().await.remove(&self.client_id);
-            session.close(channel);
             session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+            session.close(channel);
             let mut pending_client = self.pending_client.lock().await;
             if pending_client.is_some() && pending_client.unwrap() == self.client_id {
                 *pending_client = None;
