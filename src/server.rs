@@ -261,7 +261,7 @@ impl Handler for GameServer {
 
     async fn data(
         &mut self,
-        _channel: ChannelId,
+        channel: ChannelId,
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
@@ -271,29 +271,30 @@ impl Handler for GameServer {
         if key_code == KeyCode::Esc {
             self.clients.lock().await.remove(&self.client_id);
             self.clients_to_game.lock().await.remove(&self.client_id);
+            session.close(channel);
             session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
             if pending_client.is_some() && pending_client.unwrap() == self.client_id {
                 *pending_client = None;
+                log::info!("Removed player from pending list");
             }
+            return Ok(());
         }
 
-        if pending_client.is_some() && pending_client.unwrap() != self.client_id {
+        if pending_client.is_some() && pending_client.unwrap() == self.client_id {
             return Ok(());
         }
 
         if let Some(game_id) = &mut self.clients_to_game.lock().await.get_mut(&self.client_id) {
             if let Some(game) = self.games.lock().await.get_mut(game_id) {
                 game.handle_input(self.client_id, key_code);
-            } else {
-                self.clients.lock().await.remove(&self.client_id);
-                self.clients_to_game.lock().await.remove(&self.client_id);
-                session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+                return Ok(());
             }
-        } else {
-            self.clients.lock().await.remove(&self.client_id);
-            self.clients_to_game.lock().await.remove(&self.client_id);
-            session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
         }
+
+        self.clients.lock().await.remove(&self.client_id);
+        self.clients_to_game.lock().await.remove(&self.client_id);
+        session.close(channel);
+        session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
 
         Ok(())
     }
