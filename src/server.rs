@@ -199,7 +199,10 @@ impl Handler for GameServer {
                     .lock()
                     .await
                     .insert(self.client_id, game.id);
-                log::info!("Added player to new game");
+                log::info!(
+                    "Added player to new game. There are now {} games running",
+                    self.games.lock().await.len()
+                );
                 *pending_client_id = None;
             } else {
                 clients.insert(self.client_id, terminal);
@@ -207,7 +210,7 @@ impl Handler for GameServer {
                 log::info!("Added player to pending list");
                 terminal_handle.message(
                     format!(
-                        "Welcome to the {GAME_NAME}! There are {} games running.\r\nWaiting for another player to join...\r\nIn the meanwhile, remember to set your terminal to a minimum of {TERMINAL_WIDTH}x{TERMINAL_HEIGHT} characters",
+                        "Welcome to the {GAME_NAME}! There are {} games running.\r\nWaiting for another player to join...\r\nIn the meanwhile, remember to set your terminal to a minimum of {TERMINAL_WIDTH}x{TERMINAL_HEIGHT} characters.\r\n\r\nPress Esc to close the game.",
                         self.clients_to_game.lock().await.len()
                     )
                     .as_str(),
@@ -258,35 +261,38 @@ impl Handler for GameServer {
 
     async fn data(
         &mut self,
-        channel: ChannelId,
+        _channel: ChannelId,
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let key_code = convert_data_to_key_code(data);
-        if let Some(game_id) = &mut self.clients_to_game.lock().await.get_mut(&self.client_id) {
-            if let Some(game) = self.games.lock().await.get_mut(game_id) {
-                game.handle_input(self.client_id, key_code);
-            } else {
-                let pending_client = self.pending_client.lock().await;
-                // In case no game is assigned but we are not waiting for a game, disconnect
-                if pending_client.is_none()
-                    || (pending_client.is_some() && pending_client.unwrap() != self.client_id)
-                {
-                    session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
-                    session.close(channel);
-                }
-            }
-        }
+        let mut pending_client = self.pending_client.lock().await;
 
         if key_code == KeyCode::Esc {
             self.clients.lock().await.remove(&self.client_id);
             self.clients_to_game.lock().await.remove(&self.client_id);
             session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
-            session.close(channel);
-            let mut pending_client = self.pending_client.lock().await;
             if pending_client.is_some() && pending_client.unwrap() == self.client_id {
                 *pending_client = None;
             }
+        }
+
+        if pending_client.is_some() && pending_client.unwrap() != self.client_id {
+            return Ok(());
+        }
+
+        if let Some(game_id) = &mut self.clients_to_game.lock().await.get_mut(&self.client_id) {
+            if let Some(game) = self.games.lock().await.get_mut(game_id) {
+                game.handle_input(self.client_id, key_code);
+            } else {
+                self.clients.lock().await.remove(&self.client_id);
+                self.clients_to_game.lock().await.remove(&self.client_id);
+                session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+            }
+        } else {
+            self.clients.lock().await.remove(&self.client_id);
+            self.clients_to_game.lock().await.remove(&self.client_id);
+            session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
         }
 
         Ok(())
