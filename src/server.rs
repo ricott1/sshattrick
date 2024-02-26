@@ -104,21 +104,8 @@ impl GameServer {
                     log::info!("Removing game {game_id}");
                     games.lock().await.remove(&game_id);
 
-                    if let Some(red_handle) = clients.lock().await.get(&red_client_id) {
-                        red_handle
-                            .close()
-                            .await
-                            .unwrap_or_else(|_| log::error!("Failed to close blue client handle."));
-                        clients.lock().await.remove(&red_client_id);
-                    }
-
-                    if let Some(blue_handle) = clients.lock().await.get(&blue_client_id) {
-                        blue_handle
-                            .close()
-                            .await
-                            .unwrap_or_else(|_| log::error!("Failed to close blue client handle."));
-                        clients.lock().await.remove(&blue_client_id);
-                    }
+                    clients.lock().await.remove(&red_client_id);
+                    clients.lock().await.remove(&blue_client_id);
 
                     clients_to_game.lock().await.remove(&red_client_id);
                     clients_to_game.lock().await.remove(&blue_client_id);
@@ -126,7 +113,8 @@ impl GameServer {
 
                 // Remove pending client if it's been waiting for too long
                 let mut pending_client = pending_client.lock().await;
-                if let Some((pending_id, instant)) = pending_client.clone() {
+                if pending_client.is_some() {
+                    let (pending_id, instant) = pending_client.as_ref().unwrap().clone();
                     if instant.elapsed().as_secs() > INACTIVITY_TIMEOUT {
                         log::info!("Pending client connection timed out");
                         clients.lock().await.remove(&pending_id);
@@ -176,24 +164,13 @@ impl Server for GameServer {
 impl Handler for GameServer {
     type Error = anyhow::Error;
 
-    async fn channel_open_forwarded_tcpip(
-        &mut self,
-        channel: Channel<Msg>,
-        _: &str,
-        _: u32,
-        _: &str,
-        _: u32,
-        session: &mut Session,
-    ) -> Result<bool, Self::Error> {
-        self.channel_open_session(channel, session).await
-    }
-
     async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
         {
+            log::info!("Opening new session");
             let mut terminal_handle = TerminalHandle::new(session.handle(), channel.id());
             let backend = CrosstermBackend::new(terminal_handle.clone());
             let terminal = Terminal::with_options(
@@ -232,14 +209,17 @@ impl Handler for GameServer {
                 );
 
                 self.games.lock().await.insert(game.id, game.clone());
+                let number_of_games = self.games.lock().await.len();
                 self.clients_to_game.lock().await.insert(client_id, game.id);
                 self.clients_to_game
                     .lock()
                     .await
                     .insert(self.client_id, game.id);
                 log::info!(
-                    "Added player to new game. There are now {} games running",
-                    self.games.lock().await.len()
+                    "Added player to new game. There {} now {} game{} running",
+                    if number_of_games == 1 { "is" } else { "are" },
+                    number_of_games,
+                    if number_of_games == 1 { "" } else { "s" }
                 );
                 *pending_client_id = None;
             } else {
@@ -247,8 +227,7 @@ impl Handler for GameServer {
                 log::info!("Added player to pending list");
                 terminal_handle.message(
                     format!(
-                        "Welcome to the {GAME_NAME}! There are {} games running.\r\nWaiting for another player to join...\r\nIn the meanwhile, remember to set your terminal to a minimum of {TERMINAL_WIDTH}x{TERMINAL_HEIGHT} characters.\r\n\r\nPress Esc to close the game. Your connection will be closed after {INACTIVITY_TIMEOUT} seconds of inactivity.\r\n",
-                        self.clients_to_game.lock().await.len()
+                        "Welcome to the {GAME_NAME}! Waiting for another player to join...\r\nIn the meanwhile, remember to set your terminal to a minimum of {TERMINAL_WIDTH}x{TERMINAL_HEIGHT} characters.\r\n\r\nPress Esc to close the game. Your connection will be closed after {INACTIVITY_TIMEOUT} seconds of inactivity.\r\n",
                     )
                     .as_str(),
                 )?;
@@ -310,8 +289,9 @@ impl Handler for GameServer {
             self.clients.lock().await.remove(&self.client_id);
             self.clients_to_game.lock().await.remove(&self.client_id);
             session.eof(channel);
+            session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
             session.close(channel);
-            // session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+
             if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
                 *pending_client = None;
                 log::info!("Removed player from pending list");
@@ -333,25 +313,9 @@ impl Handler for GameServer {
         self.clients.lock().await.remove(&self.client_id);
         self.clients_to_game.lock().await.remove(&self.client_id);
         session.eof(channel);
+        session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
         session.close(channel);
-        // session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
 
         Ok(())
-    }
-
-    async fn tcpip_forward(
-        &mut self,
-        _: &str,
-        _: &mut u32,
-        session: &mut Session,
-    ) -> Result<bool, Self::Error> {
-        let handle = session.handle();
-        tokio::spawn(async move {
-            handle
-                .channel_open_forwarded_tcpip("", 0, "0.0.0.0", 0)
-                .await
-                .unwrap();
-        });
-        Ok(true)
     }
 }

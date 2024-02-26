@@ -891,7 +891,8 @@ impl Game {
     }
 
     pub fn is_over(&self) -> bool {
-        !self.red_client.is_connected && !self.blue_client.is_connected
+        // !self.red_client.is_connected && !self.blue_client.is_connected
+        matches!(self.state, GameState::Ending { .. })
     }
 
     pub fn is_running(&self) -> bool {
