@@ -149,6 +149,25 @@ impl GameServer {
             .await?;
         Ok(())
     }
+
+    async fn close_session(
+        &mut self,
+        session: &mut Session,
+        channel: ChannelId,
+    ) -> Result<(), anyhow::Error> {
+        self.clients.lock().await.remove(&self.client_id);
+        self.clients_to_game.lock().await.remove(&self.client_id);
+        let mut pending_client = self.pending_client.lock().await;
+        session.eof(channel);
+        session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
+        session.close(channel);
+
+        if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
+            *pending_client = None;
+            log::info!("Removed player from pending list");
+        }
+        Ok(())
+    }
 }
 
 impl Server for GameServer {
@@ -163,6 +182,22 @@ impl Server for GameServer {
 #[async_trait]
 impl Handler for GameServer {
     type Error = anyhow::Error;
+
+    async fn channel_close(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.close_session(session, channel).await
+    }
+
+    async fn channel_eof(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.close_session(session, channel).await
+    }
 
     async fn channel_open_session(
         &mut self,
