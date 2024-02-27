@@ -78,7 +78,6 @@ impl GameServer {
     pub async fn run(&mut self, port: u16) -> Result<(), anyhow::Error> {
         let games = self.games.clone();
         let clients = self.clients.clone();
-        let clients_to_game = self.clients_to_game.clone();
         let pending_client = self.pending_client.clone();
         log::info!("Starting game loop");
         // TODO (maybe): spawn a new loop for each game. Not sure it's a good idea actually
@@ -125,7 +124,7 @@ impl GameServer {
 
                 // Remove pending client if it's been waiting for too long
                 let mut pending_client = pending_client.lock().await;
-                log::info!("Pending client: {:?}", pending_client);
+                log::debug!("Pending client: {:?}", pending_client);
                 if pending_client.is_some() {
                     let (pending_id, instant) = pending_client.as_ref().unwrap().clone();
                     if instant.elapsed().as_secs() > INACTIVITY_TIMEOUT {
