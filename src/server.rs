@@ -88,11 +88,6 @@ impl GameServer {
                 tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
                 let mut to_remove = vec![];
                 for (_, game) in games.lock().await.iter_mut() {
-                    if game.is_over() {
-                        to_remove.push((game.id, game.client_ids()));
-                        continue;
-                    }
-
                     let (red_client_id, blue_client_id) = game.client_ids();
                     if clients.lock().await.get(&red_client_id).is_none() {
                         game.disconnect(red_client_id);
@@ -105,30 +100,27 @@ impl GameServer {
 
                     if game.connections_state() == (false, false) {
                         log::info!("Both players disconnected, removing game {}", game.id);
-                        to_remove.push((game.id, game.client_ids()));
+                        to_remove.push(game.id);
                     } else {
                         game.update().unwrap_or_else(|e| {
                             log::error!("Failed to update game: {:?}", e);
-                            to_remove.push((game.id, game.client_ids()));
+                            to_remove.push(game.id);
                         });
 
                         game.draw().unwrap_or_else(|e| {
                             log::error!("Failed to draw game: {:?}", e);
-                            to_remove.push((game.id, game.client_ids()));
+                            to_remove.push(game.id);
                         });
+                    }
+
+                    if game.is_over() {
+                        to_remove.push(game.id);
                     }
                 }
 
-                for ids in to_remove {
-                    let (game_id, (red_client_id, blue_client_id)) = ids;
+                for game_id in to_remove {
                     log::info!("Removing game {game_id}");
                     games.lock().await.remove(&game_id);
-
-                    // clients.lock().await.remove(&red_client_id);
-                    // clients.lock().await.remove(&blue_client_id);
-
-                    // clients_to_game.lock().await.remove(&red_client_id);
-                    // clients_to_game.lock().await.remove(&blue_client_id);
                 }
 
                 // Remove pending client if it's been waiting for too long
