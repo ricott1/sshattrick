@@ -890,8 +890,15 @@ impl Game {
         self.blue_client.is_connected = false;
     }
 
+    pub fn disconnect(&mut self, client_id: usize) {
+        if self.red_client.id == client_id {
+            self.red_client.is_connected = false;
+        } else {
+            self.blue_client.is_connected = false;
+        }
+    }
+
     pub fn is_over(&self) -> bool {
-        // !self.red_client.is_connected && !self.blue_client.is_connected
         matches!(self.state, GameState::Ending { .. })
     }
 
@@ -905,11 +912,7 @@ impl Game {
 
     pub fn handle_input(&mut self, client_id: usize, key_code: KeyCode) {
         if key_code == KeyCode::Esc {
-            if self.red_client.id == client_id {
-                self.red_client.is_connected = false;
-            } else {
-                self.blue_client.is_connected = false;
-            }
+            self.disconnect(client_id);
             return;
         }
 

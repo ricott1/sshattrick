@@ -90,29 +90,50 @@ impl GameServer {
                 for (_, game) in games.lock().await.iter_mut() {
                     if game.is_over() {
                         to_remove.push((game.id, game.client_ids()));
+                        continue;
                     }
-                    game.update().expect(
-                        "Failed to update game. This is a bug, please report it to the developers",
-                    );
 
-                    game.draw().expect(
-                        "Failed to draw game. This is a bug, please report it to the developers",
-                    );
+                    let (red_client_id, blue_client_id) = game.client_ids();
+                    if clients.lock().await.get(&red_client_id).is_none() {
+                        game.disconnect(red_client_id);
+                    }
+                    if clients.lock().await.get(&blue_client_id).is_none() {
+                        game.disconnect(blue_client_id);
+                    }
+
+                    log::info!("Connections state: {:?}", game.connections_state());
+
+                    if game.connections_state() == (false, false) {
+                        log::info!("Both players disconnected, removing game {}", game.id);
+                        to_remove.push((game.id, game.client_ids()));
+                    } else {
+                        game.update().unwrap_or_else(|e| {
+                            log::error!("Failed to update game: {:?}", e);
+                            to_remove.push((game.id, game.client_ids()));
+                        });
+
+                        game.draw().unwrap_or_else(|e| {
+                            log::error!("Failed to draw game: {:?}", e);
+                            to_remove.push((game.id, game.client_ids()));
+                        });
+                    }
                 }
+
                 for ids in to_remove {
                     let (game_id, (red_client_id, blue_client_id)) = ids;
                     log::info!("Removing game {game_id}");
                     games.lock().await.remove(&game_id);
 
-                    clients.lock().await.remove(&red_client_id);
-                    clients.lock().await.remove(&blue_client_id);
+                    // clients.lock().await.remove(&red_client_id);
+                    // clients.lock().await.remove(&blue_client_id);
 
-                    clients_to_game.lock().await.remove(&red_client_id);
-                    clients_to_game.lock().await.remove(&blue_client_id);
+                    // clients_to_game.lock().await.remove(&red_client_id);
+                    // clients_to_game.lock().await.remove(&blue_client_id);
                 }
 
                 // Remove pending client if it's been waiting for too long
                 let mut pending_client = pending_client.lock().await;
+                log::info!("Pending client: {:?}", pending_client);
                 if pending_client.is_some() {
                     let (pending_id, instant) = pending_client.as_ref().unwrap().clone();
                     if instant.elapsed().as_secs() > INACTIVITY_TIMEOUT {
@@ -157,11 +178,12 @@ impl GameServer {
     ) -> Result<(), anyhow::Error> {
         self.clients.lock().await.remove(&self.client_id);
         self.clients_to_game.lock().await.remove(&self.client_id);
-        let mut pending_client = self.pending_client.lock().await;
+
         session.eof(channel);
         session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
         session.close(channel);
 
+        let mut pending_client = self.pending_client.lock().await;
         if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
             *pending_client = None;
             log::info!("Removed player from pending list");
@@ -238,6 +260,7 @@ impl Handler for GameServer {
                         }),
                     },
                 )?;
+                clients.insert(self.client_id, terminal_handle);
                 let game = Game::new(
                     (client_id.clone(), pending_terminal),
                     (self.client_id, terminal),
@@ -318,22 +341,15 @@ impl Handler for GameServer {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let key_code = convert_data_to_key_code(data);
-        let mut pending_client = self.pending_client.lock().await;
 
         if key_code == KeyCode::Esc {
-            self.clients.lock().await.remove(&self.client_id);
-            self.clients_to_game.lock().await.remove(&self.client_id);
-            session.eof(channel);
-            session.disconnect(russh::Disconnect::ByApplication, "Quit", "");
-            session.close(channel);
-
-            if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
-                *pending_client = None;
-                log::info!("Removed player from pending list");
-            }
+            self.close_session(session, channel)
+                .await
+                .unwrap_or_else(|e| log::error!("Failed to close session: {:?}", e));
             return Ok(());
         }
 
+        let pending_client = self.pending_client.lock().await;
         if pending_client.is_some() && pending_client.unwrap().0 == self.client_id {
             return Ok(());
         }
