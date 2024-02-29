@@ -1,0 +1,26 @@
+[Unit]
+Description=sshattrick - multiplayer game that you can play over SSH, it is a clone of the popular game Hattrick
+Wants=network-online.target
+After=multi-user.target network.target network-online.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nobody
+EnvironmentFile=/etc/sshattrick.conf
+ExecStart=/usr/bin/sshattrick -p $SSH_PORT
+Restart=always
+RestartSec=30
+TimeoutStartSec=300
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectSystem=strict
+ProtectHome=read-only
+SystemCallFilter=~@mount
+
+[Install]
+WantedBy=multi-user.target
