@@ -2,6 +2,7 @@ use super::client::AppClient;
 use crate::game::{Game, GameState};
 use crate::lobby::{
     generate_invite_code, FriendCodeState, LobbyStats, PendingPlayer, PlayerMode, FRIEND_CODE_LEN,
+    LOBBY_IDLE_KICK, LOBBY_IDLE_WARNING_REMAINING,
 };
 use crate::tui::Tui;
 use crate::types::{AppResult, GameSide, TerminalEvent};
@@ -153,6 +154,7 @@ impl AppServer {
                         }
                         Self::pair_friend_codes(&mut players, &lobby_sender, &ongoing_games);
                         Self::pair_auto_queue(&mut players, &lobby_sender, &ongoing_games);
+                        Self::kick_idle_players(&mut players);
                     }
                 }
                 _ = draw_ticker.tick() => {
@@ -188,6 +190,7 @@ impl AppServer {
                         player.dirty = true;
                     }
                     TerminalEvent::Key(key) => {
+                        player.last_input_at = Instant::now();
                         let prev_discriminant = std::mem::discriminant(&player.mode);
 
                         if matches!(player.mode, PlayerMode::Idle) {
@@ -252,6 +255,31 @@ impl AppServer {
         for i in to_remove.into_iter().rev() {
             players.remove(i);
         }
+    }
+
+    /// Remove lobby players who haven't pressed a key for `LOBBY_IDLE_KICK`.
+    /// Practising players are exempt - their input is continuous gameplay.
+    /// Players inside the warning window are dirtied so the countdown updates.
+    fn kick_idle_players(players: &mut Vec<PendingPlayer>) {
+        let now = Instant::now();
+        players.retain_mut(|player| {
+            if matches!(player.mode, PlayerMode::Practicing(_)) {
+                return true;
+            }
+            let elapsed = now.saturating_duration_since(player.last_input_at);
+            if elapsed >= LOBBY_IDLE_KICK {
+                log::info!(
+                    "Kicking idle player {} after {}s",
+                    player.tui.username(),
+                    elapsed.as_secs()
+                );
+                return false;
+            }
+            if kick_warning_secs(player.last_input_at, now).is_some() {
+                player.dirty = true;
+            }
+            true
+        });
     }
 
     fn pair_friend_codes(
@@ -347,8 +375,14 @@ impl AppServer {
     }
 
     async fn redraw_players(players: &mut [PendingPlayer], stats: &LobbyStats) {
+        let now = Instant::now();
         for player in players.iter_mut() {
-            let PendingPlayer { tui, mode, dirty } = player;
+            let PendingPlayer {
+                tui,
+                mode,
+                dirty,
+                last_input_at,
+            } = player;
             let mut wrote = false;
             match mode {
                 PlayerMode::Practicing(g) => {
@@ -357,25 +391,19 @@ impl AppServer {
                         wrote = true;
                     }
                 }
-                PlayerMode::Idle if *dirty => {
-                    let _ = tui.draw_lobby(stats, crate::lobby::LobbyView::Idle);
-                    *dirty = false;
-                    wrote = true;
-                }
-                PlayerMode::AutoQueue if *dirty => {
-                    let _ = tui.draw_lobby(stats, crate::lobby::LobbyView::AutoQueue);
-                    *dirty = false;
-                    wrote = true;
-                }
-                PlayerMode::ShowingCode(state) if *dirty => {
-                    let _ = tui.draw_lobby(
-                        stats,
-                        crate::lobby::LobbyView::ShowingCode {
+                lobby_mode if *dirty => {
+                    let warning = kick_warning_secs(*last_input_at, now);
+                    let view = match lobby_mode {
+                        PlayerMode::Idle => crate::lobby::LobbyView::Idle,
+                        PlayerMode::AutoQueue => crate::lobby::LobbyView::AutoQueue,
+                        PlayerMode::ShowingCode(state) => crate::lobby::LobbyView::ShowingCode {
                             code: state.code.as_str(),
                             typed: state.typed.as_str(),
                             last_attempt_failed: state.last_attempt_failed,
                         },
-                    );
+                        PlayerMode::Practicing(_) => unreachable!(),
+                    };
+                    let _ = tui.draw_lobby(stats, view, warning);
                     *dirty = false;
                     wrote = true;
                 }
@@ -505,6 +533,24 @@ impl AppServer {
             _ => {}
         }
     }
+}
+
+/// Seconds remaining until inactivity kick, rounded up. `None` when outside
+/// the warning window or already past the kick deadline. Used both by
+/// `kick_idle_players` (to decide whether to dirty) and `redraw_players` (to
+/// render the countdown) so the two paths can't drift.
+fn kick_warning_secs(last_input_at: Instant, now: Instant) -> Option<u32> {
+    let elapsed = now.saturating_duration_since(last_input_at);
+    if elapsed >= LOBBY_IDLE_KICK {
+        return None;
+    }
+    let remaining = LOBBY_IDLE_KICK - elapsed;
+    if remaining >= LOBBY_IDLE_WARNING_REMAINING {
+        return None;
+    }
+    // Round up so the countdown ticks 10..1 instead of 9..0.
+    let secs = remaining.as_secs() as u32 + u32::from(remaining.subsec_nanos() > 0);
+    Some(secs)
 }
 
 /// Yield the next event from an `Option<Tui>`, or park the branch forever when

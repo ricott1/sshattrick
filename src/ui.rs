@@ -189,22 +189,25 @@ pub fn render_lobby(
     games_won: usize,
     stats: &LobbyStats,
     view: LobbyView,
+    kick_warning_secs: Option<u32>,
 ) {
     let area = frame.area();
     frame.render_widget(Clear, area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(1), // top pad
-        Constraint::Length(1), // title
-        Constraint::Length(1), // pad
-        Constraint::Length(1), // username
-        Constraint::Length(1), // pad
-        Constraint::Length(2), // games played + won
-        Constraint::Length(2), // pad
-        Constraint::Length(7), // view-specific block (fixed)
-        Constraint::Length(2), // pad
-        Constraint::Length(2), // stats (connected + ongoing)
-        Constraint::Fill(1),   // bottom spacer
+        Constraint::Length(1), // 0: top pad
+        Constraint::Length(1), // 1: title
+        Constraint::Length(1), // 2: pad
+        Constraint::Length(1), // 3: username
+        Constraint::Length(1), // 4: pad
+        Constraint::Length(2), // 5: games played + won
+        Constraint::Length(2), // 6: pad
+        Constraint::Length(7), // 7: view-specific block (fixed)
+        Constraint::Length(1), // 8: pad
+        Constraint::Length(1), // 9: kick warning (empty unless within window)
+        Constraint::Length(1), // 10: pad
+        Constraint::Length(2), // 11: stats (connected + ongoing)
+        Constraint::Fill(1),   // 12: bottom spacer
     ])
     .split(area);
 
@@ -277,12 +280,22 @@ pub fn render_lobby(
         chunks[7],
     );
 
+    if let Some(secs) = kick_warning_secs {
+        frame.render_widget(
+            centered(Line::styled(
+                format!("idle - kicking in {secs}s, press any key"),
+                Style::new().red().bold(),
+            )),
+            chunks[9],
+        );
+    }
+
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(format!("Connected:     {}", stats.connected)),
             Line::from(format!("Ongoing games: {}", stats.ongoing_games)),
         ])
         .alignment(Alignment::Center),
-        chunks[9],
+        chunks[11],
     );
 }

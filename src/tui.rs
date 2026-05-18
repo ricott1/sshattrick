@@ -100,6 +100,7 @@ impl Tui {
         &mut self,
         stats: &crate::lobby::LobbyStats,
         view: crate::lobby::LobbyView,
+        kick_warning_secs: Option<u32>,
     ) -> AppResult<()> {
         let Self {
             username,
@@ -109,7 +110,15 @@ impl Tui {
             ..
         } = self;
         terminal.draw(|frame| {
-            ui::render_lobby(frame, username, *games_played, *games_won, stats, view)
+            ui::render_lobby(
+                frame,
+                username,
+                *games_played,
+                *games_won,
+                stats,
+                view,
+                kick_warning_secs,
+            )
         })?;
         Ok(())
     }

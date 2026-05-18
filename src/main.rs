@@ -8,7 +8,7 @@ use log4rs::{
 };
 use sshattrick::{ssh::AppServer, store_path, AppResult};
 
-const DEFAULT_PORT: u16 = 2020;
+const DEFAULT_PORT: u16 = 3020;
 
 #[derive(Parser, Debug)]
 #[clap(name="ssHattrick", about = "Hockey in the terminal via ssh", author, version, long_about = None)]

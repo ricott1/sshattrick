@@ -10,9 +10,9 @@ ssHattrick is a multiplayer game that you can play over SSH. It is a clone of th
 
 Remember to set the terminal to a minimum size of 160x50. Some terminals don't support the game colors, so you might need to try different ones. Here is a list of tested terminals:
 
--   Linux: whatever the default terminal is, it should work
--   MacOs: [iTerm2](https://iterm2.com/)
--   Windows: need someone to test it
+- Linux: whatever the default terminal is, it should work
+- MacOs: [iTerm2](https://iterm2.com/)
+- Windows: need someone to test it
 
 ## Build and Run
 
@@ -22,9 +22,9 @@ You need to have the rust toolchain installed --> https://www.rust-lang.org/tool
 
 `cargo build --release`
 
-To run the server, you can run the executable and pass the port as an argument (2020 is the default port)
+To run the server, you can run the executable and pass the port as an argument (3020 is the default port)
 
-`./target/release/sshattrick -p 2020`
+`./target/release/sshattrick -p 3020`
 
 ## Contribution
 
