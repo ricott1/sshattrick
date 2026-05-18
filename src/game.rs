@@ -127,6 +127,9 @@ pub struct Game {
     pub last_tick: Instant,
     pub state: GameState,
     pub palette: Palette,
+    /// Solo practice: the local player controls Red; Blue has no human
+    /// player and Blue's goalie wanders at random.
+    pub practice_mode: bool,
 }
 
 impl Game {
@@ -135,6 +138,14 @@ impl Game {
     const AFTER_GOAL_DELAY_MILLISECONDS: u128 = 2000;
 
     pub fn new() -> Self {
+        Self::with_practice(false)
+    }
+
+    pub fn new_practice() -> Self {
+        Self::with_practice(true)
+    }
+
+    fn with_practice(practice_mode: bool) -> Self {
         Self {
             red_data: GameData::new(GameSide::Red),
             blue_data: GameData::new(GameSide::Blue),
@@ -147,6 +158,7 @@ impl Game {
                 time: Instant::now(),
             },
             palette: Palette::default(),
+            practice_mode,
         }
     }
 
@@ -190,22 +202,21 @@ impl Game {
             }
         }
 
-        if let Some((a, b)) = are_colliding(&self.red_data.player, &self.blue_data.player) {
-            if !matches!((a, b), (ColliderType::Catcher, ColliderType::Catcher)) {
-                inelastic_collision(
-                    &mut self.red_data.player,
-                    &mut self.blue_data.player,
-                    PLAYER_PLAYER_RESTITUTION,
-                );
-                // Unstick: if they're still overlapping after the momentum bounce,
-                // give each a tiny push along the separation normal so the next
-                // tick doesn't immediately re-trigger the same collision.
-                if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
-                    let red_pos = self.red_data.player.position().as_vec2();
-                    let blue_pos = self.blue_data.player.position().as_vec2();
-                    let normal = (blue_pos - red_pos).normalize_or_zero();
-                    self.red_data.player.velocity -= normal * PLAYER_SEPARATION_IMPULSE;
-                    self.blue_data.player.velocity += normal * PLAYER_SEPARATION_IMPULSE;
+        if !self.practice_mode {
+            if let Some((a, b)) = are_colliding(&self.red_data.player, &self.blue_data.player) {
+                if !matches!((a, b), (ColliderType::Catcher, ColliderType::Catcher)) {
+                    inelastic_collision(
+                        &mut self.red_data.player,
+                        &mut self.blue_data.player,
+                        PLAYER_PLAYER_RESTITUTION,
+                    );
+                    if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
+                        let red_pos = self.red_data.player.position().as_vec2();
+                        let blue_pos = self.blue_data.player.position().as_vec2();
+                        let normal = (blue_pos - red_pos).normalize_or_zero();
+                        self.red_data.player.velocity -= normal * PLAYER_SEPARATION_IMPULSE;
+                        self.blue_data.player.velocity += normal * PLAYER_SEPARATION_IMPULSE;
+                    }
                 }
             }
         }
@@ -220,7 +231,9 @@ impl Game {
                 }
             }
         }
-        if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
+        if !self.practice_mode
+            && are_colliding(&self.red_data.player, &self.blue_data.player).is_some()
+        {
             self.red_data.player.undo_rotation();
             self.blue_data.player.undo_rotation();
         }
@@ -236,11 +249,20 @@ impl Game {
         }
 
         self.red_data.goalie.align_to_player(&self.red_data.player);
-        self.blue_data.goalie.align_to_player(&self.blue_data.player);
+        if self.practice_mode {
+            self.blue_data.goalie.random_walk(deltatime);
+        } else {
+            self.blue_data.goalie.align_to_player(&self.blue_data.player);
+        }
 
         self.puck.update(deltatime);
 
-        for side in [GameSide::Red, GameSide::Blue] {
+        let contact_sides: &[GameSide] = if self.practice_mode {
+            &[GameSide::Red]
+        } else {
+            &[GameSide::Red, GameSide::Blue]
+        };
+        for &side in contact_sides {
             self.handle_puck_player_contact(side);
         }
 
@@ -408,19 +430,37 @@ impl Game {
             );
         }
         let palette = self.palette;
-        for (sprite, pos) in self.sprites_with_positions() {
+        for (sprite, pos) in self.visible_sprites().into_iter().flatten() {
             img.copy_non_trasparent_from(sprite.image(palette), pos.x as u32, pos.y as u32)?;
         }
         Ok(())
     }
 
-    fn sprites_with_positions(&self) -> [(&dyn Sprite, U16Vec2); 5] {
+    /// Fixed-size stack array of (sprite, position) for everything that should
+    /// be drawn this tick. The Blue player slot is `None` in practice mode.
+    fn visible_sprites(&self) -> [Option<(&dyn Sprite, U16Vec2)>; 5] {
         [
-            (&self.red_data.player, self.red_data.player.position()),
-            (&self.red_data.goalie, self.red_data.goalie.position()),
-            (&self.blue_data.player, self.blue_data.player.position()),
-            (&self.blue_data.goalie, self.blue_data.goalie.position()),
-            (&self.puck, self.puck.position()),
+            Some((
+                &self.red_data.player as &dyn Sprite,
+                self.red_data.player.position(),
+            )),
+            Some((
+                &self.red_data.goalie as &dyn Sprite,
+                self.red_data.goalie.position(),
+            )),
+            if self.practice_mode {
+                None
+            } else {
+                Some((
+                    &self.blue_data.player as &dyn Sprite,
+                    self.blue_data.player.position(),
+                ))
+            },
+            Some((
+                &self.blue_data.goalie as &dyn Sprite,
+                self.blue_data.goalie.position(),
+            )),
+            Some((&self.puck as &dyn Sprite, self.puck.position())),
         ]
     }
 
@@ -439,7 +479,7 @@ impl Game {
             .clone();
         self.composite_dynamic(&mut composed)?;
 
-        for (sprite, pos) in self.sprites_with_positions() {
+        for (sprite, pos) in self.visible_sprites().into_iter().flatten() {
             let size = sprite.size();
             let cy_start = pos.y / 2;
             let cy_end = (pos.y + size.y).div_ceil(2);
@@ -1049,6 +1089,18 @@ mod test {
             matches!(result, Some((ColliderType::Puck, ColliderType::Catcher))),
             "expected Catcher hit, got {result:?}",
         );
+    }
+
+    #[test]
+    fn new_practice_flips_the_practice_flag() {
+        let regular = Game::new();
+        assert!(!regular.practice_mode);
+        let practice = Game::new_practice();
+        assert!(practice.practice_mode);
+        // The visible sprite set should be smaller in practice (no Blue player).
+        let practice_count = practice.visible_sprites().iter().filter(|s| s.is_some()).count();
+        let regular_count = regular.visible_sprites().iter().filter(|s| s.is_some()).count();
+        assert!(practice_count < regular_count);
     }
 
     #[test]

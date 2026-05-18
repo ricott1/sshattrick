@@ -3,6 +3,7 @@ mod collision_detection;
 mod constants;
 mod engine;
 mod game;
+mod lobby;
 pub mod ssh;
 mod traits;
 mod tui;

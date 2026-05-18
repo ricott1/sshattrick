@@ -77,13 +77,30 @@ impl Tui {
         self.events.recv().await.unwrap_or(TerminalEvent::Quit)
     }
 
+    /// Non-blocking peek at the next event. Used by the matchmaker which
+    /// services many pending Tuis from a single tick loop. Returns `None`
+    /// if no event is queued; `Some(Quit)` if the channel was closed.
+    pub fn try_next(&mut self) -> Option<TerminalEvent> {
+        match self.events.try_recv() {
+            Ok(event) => Some(event),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                Some(TerminalEvent::Quit)
+            }
+        }
+    }
+
     pub fn draw(&mut self, game: &Game, image_lines: &[Line], viewer: GameSide) -> AppResult<()> {
         self.terminal
             .draw(|frame| ui::render(frame, game, image_lines, viewer))?;
         Ok(())
     }
 
-    pub fn draw_lobby(&mut self) -> AppResult<()> {
+    pub fn draw_lobby(
+        &mut self,
+        stats: &crate::lobby::LobbyStats,
+        view: crate::lobby::LobbyView,
+    ) -> AppResult<()> {
         let Self {
             username,
             games_played,
@@ -91,7 +108,9 @@ impl Tui {
             terminal,
             ..
         } = self;
-        terminal.draw(|frame| ui::render_lobby(frame, username, *games_played, *games_won))?;
+        terminal.draw(|frame| {
+            ui::render_lobby(frame, username, *games_played, *games_won, stats, view)
+        })?;
         Ok(())
     }
 
