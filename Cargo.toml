@@ -2,6 +2,12 @@
 name = "sshattrick"
 version = "0.1.1"
 edition = "2021"
+description = "Hockey in your terminal over SSH."
+license = "GPL-3.0-only"
+repository = "https://github.com/ricott1/sshattrick"
+readme = "README.md"
+keywords = ["ssh", "game", "terminal", "ratatui", "multiplayer"]
+categories = ["games", "command-line-utilities"]
 
 [profile.release]
 strip = true
