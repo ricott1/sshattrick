@@ -205,17 +205,40 @@ impl Game {
         if !self.practice_mode {
             if let Some((a, b)) = are_colliding(&self.red_data.player, &self.blue_data.player) {
                 if !matches!((a, b), (ColliderType::Catcher, ColliderType::Catcher)) {
+                    // inelastic_collision resets both players to previous_position()
+                    // (U16Vec2), discarding sub-pixel separation, so we read the
+                    // floats now to keep a direction for the impulse normal.
+                    let red_pre = self.red_data.player.position_float();
+                    let blue_pre = self.blue_data.player.position_float();
+
                     inelastic_collision(
                         &mut self.red_data.player,
                         &mut self.blue_data.player,
                         PLAYER_PLAYER_RESTITUTION,
                     );
                     if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
-                        let red_pos = self.red_data.player.position().as_vec2();
-                        let blue_pos = self.blue_data.player.position().as_vec2();
-                        let normal = (blue_pos - red_pos).normalize_or_zero();
+                        let mut normal = (blue_pre - red_pre).normalize_or_zero();
+                        if normal == Vec2::ZERO {
+                            // Float positions also coincided; pick any axis so
+                            // they still separate.
+                            normal = Vec2::X;
+                            log::warn!(
+                                "player-player overlap with coincident float positions: red={red_pre} blue={blue_pre}; using fallback normal"
+                            );
+                        }
                         self.red_data.player.velocity -= normal * PLAYER_SEPARATION_IMPULSE;
                         self.blue_data.player.velocity += normal * PLAYER_SEPARATION_IMPULSE;
+
+                        if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
+                            log::warn!(
+                                "player-player STILL colliding after impulse: \
+                                 red_pre={red_pre} blue_pre={blue_pre} \
+                                 v_red={} v_blue={} normal={normal} \
+                                 colliders=({a:?},{b:?})",
+                                self.red_data.player.velocity,
+                                self.blue_data.player.velocity,
+                            );
+                        }
                     }
                 }
             }
@@ -288,9 +311,11 @@ impl Game {
         }
 
         for goalie in [&mut self.red_data.goalie, &mut self.blue_data.goalie] {
-            if are_colliding(&self.puck, goalie).is_some() {
+            let colliding = are_colliding(&self.puck, goalie).is_some();
+            if colliding {
                 inelastic_collision(&mut self.puck, goalie, GOALIE_RESTITUTION);
             }
+            goalie.register_puck_contact(colliding, self.puck.possession.is_none());
         }
 
         if let Some(scored) = self.puck.has_scored() {

@@ -160,11 +160,13 @@ where
             / (one.mass() + other.mass())
     };
     let v2_other = if one.mass() == f32::INFINITY {
-        coefficient_of_restituion * (other.velocity() - one.velocity()) + one.velocity()
+        coefficient_of_restituion * (one.velocity() - other.velocity()) + one.velocity()
     } else if other.mass() == f32::INFINITY {
         other.velocity()
     } else {
-        (coefficient_of_restituion * one.mass() * (other.velocity() - one.velocity())
+        // Symmetric to v2_one with the (v-v) sign flipped; without the flip,
+        // equal masses converge on a single post-collision velocity.
+        (coefficient_of_restituion * one.mass() * (one.velocity() - other.velocity())
             + one.mass() * one.velocity()
             + other.mass() * other.velocity())
             / (one.mass() + other.mass())

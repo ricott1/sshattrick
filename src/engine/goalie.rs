@@ -13,6 +13,7 @@ pub struct Goalie {
     position: Vec2,
     side: GameSide,
     pub saves: usize,
+    was_colliding_with_puck: bool,
     random_target_y: Option<f32>,
     random_target_timer_ms: f32,
 }
@@ -23,6 +24,7 @@ impl Goalie {
             side,
             position: Vec2::ZERO,
             saves: 0,
+            was_colliding_with_puck: false,
             random_target_y: None,
             random_target_timer_ms: 0.0,
         };
@@ -31,6 +33,18 @@ impl Goalie {
             GameSide::Blue => Vec2::new((MAX_X - g.size().x).into(), BLUE_INITIAL_POSITION.y),
         };
         g
+    }
+
+    /// Edge-triggered save counter. Records that the puck is or isn't
+    /// overlapping the goalie this tick and bumps `saves` exactly once on the
+    /// transition from "not touching" to "touching a free puck" - so a puck
+    /// the goalie carries past via possession doesn't count, and a slow puck
+    /// pressed against the goalie counts once, not once per frame.
+    pub fn register_puck_contact(&mut self, colliding: bool, puck_is_free: bool) {
+        if colliding && !self.was_colliding_with_puck && puck_is_free {
+            self.saves += 1;
+        }
+        self.was_colliding_with_puck = colliding;
     }
 
     pub fn align_to_player(&mut self, player: &Player) {

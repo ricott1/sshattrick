@@ -130,6 +130,14 @@ impl Player {
         self.previous_orientation != self.orientation
     }
 
+    /// Raw float position. Use this for sub-pixel direction math (e.g. the
+    /// player-player separation normal): `position()` truncates to `U16Vec2`,
+    /// which collapses to the same coordinate when two players overlap within
+    /// a single pixel and leaves the normal at zero.
+    pub fn position_float(&self) -> Vec2 {
+        self.position
+    }
+
     pub fn previous_hit_box(&self) -> &HitBox {
         &PLAYER_IMAGE_DATA
             .get(&self.side)
