@@ -6,7 +6,7 @@ ssHattrick is a multiplayer game that you can play over SSH. It is a clone of th
 
 ## Just play!
 
-`ssh frittura.org -p 2020`
+`ssh frittura.org -p 3020`
 
 Remember to set the terminal to a minimum size of 160x50. Some terminals don't support the game colors, so you might need to try different ones. Here is a list of tested terminals:
 
