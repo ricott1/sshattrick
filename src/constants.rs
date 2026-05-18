@@ -1,0 +1,67 @@
+use glam::Vec2;
+use ratatui::layout::{Margin, Rect};
+
+pub const UI_SCREEN_SIZE: (u16, u16) = (160, 50);
+
+const PITCH_RECT: Rect = Rect {
+    x: 0,
+    y: 0,
+    width: 160,
+    height: 86,
+};
+
+pub const PITCH_INNER_RECT: Rect = PITCH_RECT.inner(Margin {
+    horizontal: 3,
+    vertical: 3,
+});
+
+pub const RED_AREA_RECT: Rect = Rect {
+    x: MIN_X,
+    y: GOALIE_AREA_MIN_Y,
+    width: GOALIE_AREA_WIDTH,
+    height: GOALIE_AREA_HEIGHT,
+};
+
+pub const RED_AREA_INNER_RECT: Rect = RED_AREA_RECT.inner(Margin {
+    horizontal: 1,
+    vertical: 1,
+});
+
+pub const BLUE_AREA_RECT: Rect = Rect {
+    x: MAX_X - GOALIE_AREA_WIDTH,
+    y: GOALIE_AREA_MIN_Y,
+    width: GOALIE_AREA_WIDTH,
+    height: GOALIE_AREA_HEIGHT,
+};
+
+pub const BLUE_AREA_INNER_RECT: Rect = BLUE_AREA_RECT.inner(Margin {
+    horizontal: 1,
+    vertical: 1,
+});
+
+pub const MIN_X: u16 = PITCH_INNER_RECT.x;
+pub const MAX_X: u16 = PITCH_INNER_RECT.x + PITCH_INNER_RECT.width;
+pub const MIN_Y: u16 = PITCH_INNER_RECT.y;
+pub const MAX_Y: u16 = PITCH_INNER_RECT.y + PITCH_INNER_RECT.height;
+
+pub const GOALIE_AREA_WIDTH: u16 = 8;
+pub const GOALIE_AREA_MIN_Y: u16 = 30;
+pub const GOALIE_AREA_MAX_Y: u16 = 56;
+pub const GOALIE_AREA_HEIGHT: u16 = GOALIE_AREA_MAX_Y - GOALIE_AREA_MIN_Y;
+
+pub const RED_INITIAL_POSITION: Vec2 = Vec2::new(20.0, 40.0);
+pub const BLUE_INITIAL_POSITION: Vec2 = Vec2::new(132.0, 40.0);
+
+pub const ACCELERATION: f32 = 0.0025;
+pub const DECELERATION: f32 = 0.005;
+pub const MAX_PLAYER_VELOCITY: f32 = 0.275;
+
+pub const PUCK_FRICTION_VELOCITY_LOSS: f32 = 0.99;
+pub const COFFICIENT_OF_WALL_BOUNCING: f32 = 0.25;
+
+pub const SKATE_TRACE_LENGTH: usize = 512;
+
+pub const AFTER_SHOOTING_COUNTER_MILLISECONDS: f32 = 50.0;
+pub const AFTER_GOT_STOLEN_COUNTER_MILLISECONDS: f32 = 50.0;
+pub const SHOOTING_DIRECTION_MODIFIER: f32 = 0.35;
+pub const SHOOTING_POWER: f32 = 0.2;

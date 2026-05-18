@@ -1,5 +1,14 @@
 use clap::{ArgAction, Parser};
-use sshattrick::server::GameServer;
+use log::LevelFilter;
+use log4rs::{
+    append::file::FileAppender,
+    config::{Appender, Root},
+    encode::pattern::PatternEncoder,
+    Config,
+};
+use sshattrick::{ssh::AppServer, store_path, AppResult};
+
+const DEFAULT_PORT: u16 = 2020;
 
 #[derive(Parser, Debug)]
 #[clap(name="ssHattrick", about = "Hockey in the terminal via ssh", author, version, long_about = None)]
@@ -9,14 +18,22 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+async fn main() -> AppResult<()> {
+    let logfile_path = store_path("sshattrick.log")?;
+    let logfile = FileAppender::builder()
+        .append(false)
+        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+        .build(logfile_path)?;
 
-    let mut game_server = GameServer::new();
+    let config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .build(Root::builder().appender("logfile").build(LevelFilter::Info))?;
 
-    let port = Args::parse().port.unwrap_or(2020);
+    log4rs::init_config(config)?;
 
-    game_server.run(port).await.expect("Failed running server");
+    let port = Args::parse().port.unwrap_or(DEFAULT_PORT);
+    let mut game_server = AppServer::new(port);
+    game_server.run().await?;
+
+    Ok(())
 }
