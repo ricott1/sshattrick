@@ -1,10 +1,6 @@
 use crossterm::event::{KeyEvent, MouseEvent};
+use glam::Vec2;
 use image::Rgba;
-use ratatui::style::{Style, Stylize};
-use std::fmt::Display;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 pub type AppResult<T> = Result<T, anyhow::Error>;
 
@@ -13,24 +9,6 @@ pub enum GameSide {
     #[default]
     Red,
     Blue,
-}
-
-impl Display for GameSide {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Red => write!(f, "Red"),
-            Self::Blue => write!(f, "Blue"),
-        }
-    }
-}
-
-impl GameSide {
-    pub fn bar_style(&self) -> Style {
-        match self {
-            GameSide::Red => Style::new().red(),
-            GameSide::Blue => Style::new().blue(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -43,15 +21,6 @@ pub enum Palette {
 }
 
 impl Palette {
-    pub fn next(&self) -> Self {
-        match self {
-            Palette::Dark => Palette::Light,
-            Palette::Light => Palette::Basket,
-            Palette::Basket => Palette::Alt,
-            Palette::Alt => Palette::Dark,
-        }
-    }
-
     pub fn skate_trace_color(&self) -> Rgba<u8> {
         match self {
             Palette::Dark => Rgba([55, 55, 85, 255]),
@@ -85,6 +54,20 @@ impl Orientation {
     pub fn previous(self) -> Self {
         ((self as usize + Self::MAX - 1) % Self::MAX).into()
     }
+
+    pub fn shooting_direction(self) -> Vec2 {
+        match self {
+            Orientation::Up => Vec2::new(1.0, -1.0),
+            Orientation::UpLeft => Vec2::new(0.0, -1.0),
+            Orientation::Left => Vec2::new(-1.0, -1.0),
+            Orientation::DownLeft => Vec2::new(-1.0, 0.0),
+            Orientation::Down => Vec2::new(-1.0, 1.0),
+            Orientation::DownRight => Vec2::new(0.0, 1.0),
+            Orientation::Right => Vec2::new(1.0, 1.0),
+            Orientation::UpRight => Vec2::new(1.0, 0.0),
+        }
+        .normalize()
+    }
 }
 
 impl From<usize> for Orientation {
@@ -109,11 +92,4 @@ pub enum TerminalEvent {
     Mouse(MouseEvent),
     Resize(u16, u16),
     Quit,
-}
-
-impl Future for TerminalEvent {
-    type Output = Self;
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Ready(*self)
-    }
 }

@@ -27,14 +27,18 @@ impl AppClient {
             .get_mut(&id)
             .with_context(|| format!("unknown channel: {id}"))
     }
+
+    fn accept(&mut self, user: &str) -> AppResult<Auth> {
+        self.username = user.to_string();
+        Ok(Auth::Accept)
+    }
 }
 
 impl server::Handler for AppClient {
     type Error = anyhow::Error;
 
     async fn auth_password(&mut self, user: &str, _password: &str) -> AppResult<Auth> {
-        self.username = user.to_string();
-        Ok(Auth::Accept)
+        self.accept(user)
     }
 
     async fn auth_publickey(
@@ -42,8 +46,7 @@ impl server::Handler for AppClient {
         user: &str,
         _public_key: &russh::keys::PublicKey,
     ) -> AppResult<Auth> {
-        self.username = user.to_string();
-        Ok(Auth::Accept)
+        self.accept(user)
     }
 
     async fn channel_open_session(
@@ -56,12 +59,13 @@ impl server::Handler for AppClient {
             return Err(anyhow!("channel `{}` has been already opened", channel.id()));
         }
 
-        let ongoing_games = self.channels.len();
-        let plural = if ongoing_games == 1 { "" } else { "s" };
-        let verb = if ongoing_games == 1 { "is" } else { "are" };
-        let msg = format!(
-            "Connection opened, waiting for other player to join.\n\rThere {verb} currently {ongoing_games} ongoing game{plural}.\n\r"
-        );
+        let ongoing = self.channels.len();
+        let games = if ongoing == 1 {
+            "is 1 ongoing game".to_string()
+        } else {
+            format!("are {ongoing} ongoing games")
+        };
+        let msg = format!("Connection opened, waiting for other player to join.\n\rThere {games}.\n\r");
         let _ = session.handle().data(channel.id(), msg).await;
 
         Ok(true)

@@ -10,9 +10,7 @@ use image::RgbaImage;
 
 #[derive(Debug, Default)]
 pub struct Goalie {
-    previous_position: Vec2,
     position: Vec2,
-    velocity: Vec2,
     side: GameSide,
     pub saves: usize,
 }
@@ -21,18 +19,13 @@ impl Goalie {
     pub fn new(side: GameSide) -> Self {
         let mut g = Self {
             side,
-            previous_position: Vec2::ZERO,
             position: Vec2::ZERO,
-            velocity: Vec2::ZERO,
             saves: 0,
         };
-
         g.position = match side {
             GameSide::Red => Vec2::new(MIN_X.into(), RED_INITIAL_POSITION.y),
             GameSide::Blue => Vec2::new((MAX_X - g.size().x).into(), BLUE_INITIAL_POSITION.y),
         };
-        g.previous_position = g.position;
-
         g
     }
 
@@ -48,7 +41,7 @@ impl Body for Goalie {
     }
 
     fn previous_position(&self) -> U16Vec2 {
-        self.previous_position.as_u16vec2()
+        self.position()
     }
 
     fn position(&self) -> U16Vec2 {
@@ -60,23 +53,18 @@ impl Body for Goalie {
             GameSide::Red => RED_AREA_INNER_RECT,
             GameSide::Blue => BLUE_AREA_INNER_RECT,
         };
-
         let min_y = inner_area.y;
         let max_y = inner_area.y + inner_area.height - self.size().y;
-        self.position.y = position.y.max(min_y).min(max_y) as f32;
+        self.position.y = position.y.clamp(min_y, max_y) as f32;
     }
 
     fn velocity(&self) -> Vec2 {
-        self.velocity
+        Vec2::ZERO
     }
 
-    fn set_velocity(&mut self, _velocity: Vec2) {
-        // Goalies body is updated by the player position
-    }
+    fn set_velocity(&mut self, _velocity: Vec2) {}
 
-    fn update_body(&mut self, _deltatime: f32) {
-        // Goalies body is updated by the player position
-    }
+    fn update_body(&mut self, _deltatime: f32) {}
 }
 
 impl Sprite for Goalie {

@@ -15,24 +15,9 @@ pub struct HitBox {
 
 impl From<HashMap<U16Vec2, ColliderType>> for HitBox {
     fn from(value: HashMap<U16Vec2, ColliderType>) -> Self {
-        let size = if value.len() > 0 {
-            let width = value
-                .keys()
-                .max_by(|a, b| a.x.cmp(&b.x))
-                .expect("There should be a max x")
-                .x
-                + 1;
-
-            let height = value
-                .keys()
-                .max_by(|a, b| a.y.cmp(&b.y))
-                .expect("There should be a max y")
-                .y
-                + 1;
-            U16Vec2::new(width, height)
-        } else {
-            U16Vec2::ZERO
-        };
+        let size = value
+            .keys()
+            .fold(U16Vec2::ZERO, |acc, p| acc.max(*p + U16Vec2::ONE));
         Self { inner: value, size }
     }
 }

@@ -9,84 +9,37 @@ where
     if one.previous_position() == one.position() {
         return None;
     }
-    // Find all integer points in vector connecting self entity current and previous positions
-    // and check if they are in other entity hitbox.
+
     let path = one.previous_position().as_i16vec2() - one.position().as_i16vec2();
-    if path.x != 0 {
+    let other_position = other.position().as_i16vec2();
+    let other_hit_box = other.hit_box();
+
+    let offsets: Box<dyn Iterator<Item = I16Vec2>> = if path.x != 0 {
         let slope = path.y as f32 / path.x as f32;
-        if path.x > 0 {
-            for x in 0..=path.x {
-                let y = (slope * x as f32).round() as i16;
-                for (&point, &one_collider_type) in one.hit_box().iter() {
-                    let hit_box_position =
-                        (one.position() + point).as_i16vec2() + I16Vec2::new(x, y);
-                    let other_position = other.position().as_i16vec2();
-                    if hit_box_position.x < other_position.x
-                        || hit_box_position.y < other_position.y
-                    {
-                        continue;
-                    }
-                    let g_point = (hit_box_position - other_position).as_u16vec2();
-                    if let Some(&other_collider_type) = other.hit_box().get(&g_point) {
-                        return Some((one_collider_type, other_collider_type));
-                    }
-                }
-            }
+        let xs: Box<dyn Iterator<Item = i16>> = if path.x > 0 {
+            Box::new(0..=path.x)
         } else {
-            for x in path.x..=0 {
-                let y = (slope * x as f32).round() as i16;
-                for (&point, &one_collider_type) in one.hit_box().iter() {
-                    let hit_box_position =
-                        (one.position() + point).as_i16vec2() + I16Vec2::new(x, y);
-                    let other_position = other.position().as_i16vec2();
-                    if hit_box_position.x < other_position.x
-                        || hit_box_position.y < other_position.y
-                    {
-                        continue;
-                    }
-                    let g_point = (hit_box_position - other_position).as_u16vec2();
-                    if let Some(&other_collider_type) = other.hit_box().get(&g_point) {
-                        return Some((one_collider_type, other_collider_type));
-                    }
-                }
-            }
-        }
+            Box::new(path.x..=0)
+        };
+        Box::new(xs.map(move |x| I16Vec2::new(x, (slope * x as f32).round() as i16)))
     } else {
-        if path.y > 0 {
-            for y in 0..=path.y {
-                let x = path.x;
-                for (&point, &one_collider_type) in one.hit_box().iter() {
-                    let hit_box_position =
-                        (one.position() + point).as_i16vec2() + I16Vec2::new(x, y);
-                    let other_position = other.position().as_i16vec2();
-                    if hit_box_position.x < other_position.x
-                        || hit_box_position.y < other_position.y
-                    {
-                        continue;
-                    }
-                    let g_point = (hit_box_position - other_position).as_u16vec2();
-                    if let Some(&other_collider_type) = other.hit_box().get(&g_point) {
-                        return Some((one_collider_type, other_collider_type));
-                    }
-                }
-            }
+        let ys: Box<dyn Iterator<Item = i16>> = if path.y > 0 {
+            Box::new(0..=path.y)
         } else {
-            for y in path.y..=0 {
-                let x = path.x;
-                for (&point, &one_collider_type) in one.hit_box().iter() {
-                    let hit_box_position =
-                        (one.position() + point).as_i16vec2() + I16Vec2::new(x, y);
-                    let other_position = other.position().as_i16vec2();
-                    if hit_box_position.x < other_position.x
-                        || hit_box_position.y < other_position.y
-                    {
-                        continue;
-                    }
-                    let g_point = (hit_box_position - other_position).as_u16vec2();
-                    if let Some(&other_collider_type) = other.hit_box().get(&g_point) {
-                        return Some((one_collider_type, other_collider_type));
-                    }
-                }
+            Box::new(path.y..=0)
+        };
+        Box::new(ys.map(|y| I16Vec2::new(0, y)))
+    };
+
+    for offset in offsets {
+        for (&point, &one_collider_type) in one.hit_box().iter() {
+            let hit_box_position = (one.position() + point).as_i16vec2() + offset;
+            if hit_box_position.x < other_position.x || hit_box_position.y < other_position.y {
+                continue;
+            }
+            let g_point = (hit_box_position - other_position).as_u16vec2();
+            if let Some(&other_collider_type) = other_hit_box.get(&g_point) {
+                return Some((one_collider_type, other_collider_type));
             }
         }
     }
@@ -122,18 +75,6 @@ where
     E1: Entity,
     E2: Entity,
 {
-    // if (one.previous_rect().left() > other.previous_rect().right()
-    //     && one.rect().left() > other.rect().right())
-    //     || (other.previous_rect().left() > one.previous_rect().right()
-    //         && other.rect().left() > one.rect().right())
-    //     || (one.previous_rect().bottom() > other.previous_rect().top()
-    //         && one.rect().bottom() > other.rect().top())
-    //     || (other.previous_rect().bottom() > one.previous_rect().top()
-    //         && other.rect().bottom() > one.rect().top())
-    // {
-    //     return false;
-    // }
-
     let (s1_min, s1_max) = (
         one.previous_position(),
         one.previous_position() + one.size(),
@@ -154,7 +95,7 @@ where
         return false;
     }
 
-    return true;
+    true
 }
 
 pub fn are_colliding<E1, E2>(one: &E1, other: &E2) -> Option<(ColliderType, ColliderType)>
@@ -228,9 +169,6 @@ where
             + other.mass() * other.velocity())
             / (one.mass() + other.mass())
     };
-
-    // let v2_one = (one.mass()-other.mass())/(one.mass()+other.mass())*one.velocity()+2.0*other.mass()/(one.mass()+other.mass())*other.velocity();
-    // let v2_other = 2.0*one.mass()/(one.mass()+other.mass())*one.velocity()+(other.mass()-one.mass())/(one.mass()+other.mass())*other.velocity();
 
     one.set_velocity(v2_one);
     other.set_velocity(v2_other);

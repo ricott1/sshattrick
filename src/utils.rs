@@ -167,147 +167,74 @@ pub struct ImageData {
     pub hit_boxes: Vec<HitBox>,
 }
 
-pub static PLAYER_IMAGE_DATA: LazyLock<HashMap<GameSide, ImageData>> = LazyLock::new(|| {
-    let mut data = HashMap::new();
+fn load_image(path: &str) -> RgbaImage {
+    read_image(path).unwrap_or_else(|_| panic!("Could not read {path}"))
+}
 
-    let mut red_images = vec![];
-    let mut red_hit_boxes = vec![];
-    let mut blue_images = vec![];
-    let mut blue_hit_boxes = vec![];
-    for orientation in 1..=Orientation::MAX {
-        let image = read_image(format!("red{}.png", orientation).as_str())
-            .expect(format!("Could not read red{}.png.", orientation).as_str());
-        let hit_box = get_hit_box_from_image(
-            &image,
-            ColliderType::Player,
-            vec![
-                (Rgba::from([188, 188, 188, 255]), ColliderType::Stick),
-                (Rgba::from([134, 134, 134, 255]), ColliderType::Catcher),
-            ],
-        );
-        red_images.push(image);
-        red_hit_boxes.push(hit_box);
-
-        let image = read_image(format!("blue{}.png", orientation).as_str())
-            .expect(format!("Could not read blue{}.png.", orientation).as_str());
-        let hit_box = get_hit_box_from_image(
-            &image,
-            ColliderType::Player,
-            vec![
-                (Rgba::from([188, 188, 188, 255]), ColliderType::Stick),
-                (Rgba::from([134, 134, 134, 255]), ColliderType::Catcher),
-            ],
-        );
-        blue_images.push(image);
-        blue_hit_boxes.push(hit_box);
+fn load_single(path: &str, collider_type: ColliderType) -> ImageData {
+    let image = load_image(path);
+    let hit_box = get_hit_box_from_image(&image, collider_type, vec![]);
+    ImageData {
+        images: vec![image],
+        hit_boxes: vec![hit_box],
     }
-    data.insert(
-        GameSide::Red,
-        ImageData {
-            images: red_images,
-            hit_boxes: red_hit_boxes,
-        },
-    );
-    data.insert(
-        GameSide::Blue,
-        ImageData {
-            images: blue_images,
-            hit_boxes: blue_hit_boxes,
-        },
-    );
+}
 
-    data
+const PLAYER_COLLIDER_OVERRIDES: [(Rgba<u8>, ColliderType); 2] = [
+    (Rgba([188, 188, 188, 255]), ColliderType::Stick),
+    (Rgba([134, 134, 134, 255]), ColliderType::Catcher),
+];
+
+fn load_player_data(prefix: &str) -> ImageData {
+    let mut images = Vec::with_capacity(Orientation::MAX);
+    let mut hit_boxes = Vec::with_capacity(Orientation::MAX);
+    for orientation in 1..=Orientation::MAX {
+        let image = load_image(&format!("{prefix}{orientation}.png"));
+        let hit_box = get_hit_box_from_image(
+            &image,
+            ColliderType::Player,
+            PLAYER_COLLIDER_OVERRIDES.to_vec(),
+        );
+        images.push(image);
+        hit_boxes.push(hit_box);
+    }
+    ImageData { images, hit_boxes }
+}
+
+pub static PLAYER_IMAGE_DATA: LazyLock<HashMap<GameSide, ImageData>> = LazyLock::new(|| {
+    HashMap::from([
+        (GameSide::Red, load_player_data("red")),
+        (GameSide::Blue, load_player_data("blue")),
+    ])
 });
 
 pub static GOALIE_IMAGE_DATA: LazyLock<HashMap<GameSide, ImageData>> = LazyLock::new(|| {
-    let mut data = HashMap::new();
-    let image = read_image("red_goalie.png").expect("Could not read red_goalie.png");
-    let hit_box = get_hit_box_from_image(&image, ColliderType::Goalie, vec![]);
-    data.insert(
-        GameSide::Red,
-        ImageData {
-            images: vec![image],
-            hit_boxes: vec![hit_box],
-        },
-    );
-
-    let image = read_image("blue_goalie.png").expect("Could not read blue_goalie.png");
-    let hit_box = get_hit_box_from_image(&image, ColliderType::Goalie, vec![]);
-    data.insert(
-        GameSide::Blue,
-        ImageData {
-            images: vec![image],
-            hit_boxes: vec![hit_box],
-        },
-    );
-
-    data
+    HashMap::from([
+        (
+            GameSide::Red,
+            load_single("red_goalie.png", ColliderType::Goalie),
+        ),
+        (
+            GameSide::Blue,
+            load_single("blue_goalie.png", ColliderType::Goalie),
+        ),
+    ])
 });
 
 pub static PUCKS_IMAGE_DATA: LazyLock<HashMap<Palette, ImageData>> = LazyLock::new(|| {
-    let mut data = HashMap::new();
-
-    let image = read_image("puck_white.png").expect("Could not read puck_white.png.");
-    let hit_box = get_hit_box_from_image(&image, ColliderType::Puck, vec![]);
-    data.insert(
-        Palette::Dark,
-        ImageData {
-            images: vec![image],
-            hit_boxes: vec![hit_box],
-        },
-    );
-
-    let image = read_image("puck_black.png").expect("Could not read puck_black.png.");
-    let hit_box = get_hit_box_from_image(&image, ColliderType::Puck, vec![]);
-    data.insert(
-        Palette::Light,
-        ImageData {
-            images: vec![image],
-            hit_boxes: vec![hit_box],
-        },
-    );
-
-    let image = read_image("puck_white.png").expect("Could not read puck_white.png.");
-    let hit_box = get_hit_box_from_image(&image, ColliderType::Puck, vec![]);
-    data.insert(
-        Palette::Basket,
-        ImageData {
-            images: vec![image],
-            hit_boxes: vec![hit_box],
-        },
-    );
-
-    let image = read_image("puck_gold.png").expect("Could not read puck_gold.png.");
-    let hit_box = get_hit_box_from_image(&image, ColliderType::Puck, vec![]);
-    data.insert(
-        Palette::Alt,
-        ImageData {
-            images: vec![image],
-            hit_boxes: vec![hit_box],
-        },
-    );
-
-    data
+    HashMap::from([
+        (Palette::Dark, load_single("puck_white.png", ColliderType::Puck)),
+        (Palette::Light, load_single("puck_black.png", ColliderType::Puck)),
+        (Palette::Basket, load_single("puck_white.png", ColliderType::Puck)),
+        (Palette::Alt, load_single("puck_gold.png", ColliderType::Puck)),
+    ])
 });
 
 pub static PITCH_IMAGES: LazyLock<HashMap<Palette, RgbaImage>> = LazyLock::new(|| {
-    let mut data = HashMap::new();
-    data.insert(
-        Palette::Dark,
-        read_image("pitch_empty.png").expect("Could not read pitch_empty.png."),
-    );
-    data.insert(
-        Palette::Light,
-        read_image("pitch_classic.png").expect("Could not read pitch_classic.png."),
-    );
-    data.insert(
-        Palette::Basket,
-        read_image("pitch_basket.png").expect("Could not read pitch_basket.png."),
-    );
-    data.insert(
-        Palette::Alt,
-        read_image("pitch_alt.png").expect("Could not read pitch_alt.png."),
-    );
-
-    data
+    HashMap::from([
+        (Palette::Dark, load_image("pitch_empty.png")),
+        (Palette::Light, load_image("pitch_classic.png")),
+        (Palette::Basket, load_image("pitch_basket.png")),
+        (Palette::Alt, load_image("pitch_alt.png")),
+    ])
 });

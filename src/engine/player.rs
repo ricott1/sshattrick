@@ -134,15 +134,15 @@ impl Sprite for Player {
 impl Entity for Player {}
 
 impl Player {
+    fn initial_state(side: GameSide) -> (Vec2, Orientation) {
+        match side {
+            GameSide::Red => (RED_INITIAL_POSITION, Orientation::Right),
+            GameSide::Blue => (BLUE_INITIAL_POSITION, Orientation::Left),
+        }
+    }
+
     pub fn new(side: GameSide) -> Self {
-        let position = match side {
-            GameSide::Red => RED_INITIAL_POSITION,
-            GameSide::Blue => BLUE_INITIAL_POSITION,
-        };
-        let orientation = match side {
-            GameSide::Red => Orientation::Right,
-            GameSide::Blue => Orientation::Left,
-        };
+        let (position, orientation) = Self::initial_state(side);
         Self {
             side,
             previous_position: position,
@@ -158,15 +158,10 @@ impl Player {
     }
 
     pub fn reset(&mut self) {
-        self.position = match self.side {
-            GameSide::Red => RED_INITIAL_POSITION,
-            GameSide::Blue => BLUE_INITIAL_POSITION,
-        };
+        let (position, orientation) = Self::initial_state(self.side);
+        self.position = position;
         self.velocity = Vec2::ZERO;
-        self.orientation = match self.side {
-            GameSide::Red => Orientation::Right,
-            GameSide::Blue => Orientation::Left,
-        };
+        self.orientation = orientation;
         self.new_orientation = None;
         self.shooting_state.reset();
         self.after_shooting_counter = 0.0;
@@ -267,7 +262,6 @@ impl Player {
                     if self.previous_rect().bottom() < rect.top()
                         && self.rect().bottom() >= rect.top()
                     {
-                        println!("Went in from north");
                         let extra_distance = self.rect().bottom() as f32 - rect.top() as f32;
                         let bounced_distance = extra_distance * bouncing_coefficient;
                         self.position.y =
@@ -278,8 +272,6 @@ impl Player {
                     else if self.previous_rect().top() > rect.bottom()
                         && self.rect().top() <= rect.bottom()
                     {
-                        println!("Went in from south");
-
                         let extra_distance = self.rect().top() as f32 - rect.bottom() as f32;
                         let bounced_distance = extra_distance * bouncing_coefficient;
                         self.position.y = rect.bottom() as f32 + bounced_distance;
@@ -290,8 +282,6 @@ impl Player {
                     if self.previous_rect().right() < rect.left()
                         && self.rect().right() >= rect.left()
                     {
-                        println!("Went in from west");
-
                         let extra_distance = self.rect().right() as f32 - rect.left() as f32;
                         let bounced_distance = extra_distance * bouncing_coefficient;
                         self.position.x =
@@ -302,8 +292,6 @@ impl Player {
                     else if self.previous_rect().left() > rect.right()
                         && self.rect().left() <= rect.right()
                     {
-                        println!("Went in from east");
-
                         let extra_distance = self.rect().left() as f32 - rect.right() as f32;
                         let bounced_distance = extra_distance * bouncing_coefficient;
                         self.position.x = rect.right() as f32 + bounced_distance;

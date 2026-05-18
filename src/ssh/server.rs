@@ -172,8 +172,9 @@ impl AppServer {
     async fn draw_and_push(game: &Game, red_tui: &mut Tui, blue_tui: &mut Tui) -> AppResult<()> {
         red_tui.draw(game)?;
         blue_tui.draw(game)?;
-        red_tui.push_data().await?;
-        blue_tui.push_data().await?;
+        let (red, blue) = tokio::join!(red_tui.push_data(), blue_tui.push_data());
+        red?;
+        blue?;
         Ok(())
     }
 

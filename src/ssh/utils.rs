@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use crossterm::event::{KeyEventKind, KeyModifiers};
 
 pub const CMD_RESIZE: u8 = 0x04;
+const SGR_MOUSE_PREFIX: &[u8] = b"\x1b[<";
 
 fn convert_data_to_key_event(data: &[u8]) -> Option<crossterm::event::KeyEvent> {
     let key = match data {
@@ -27,7 +28,7 @@ fn convert_data_to_key_event(data: &[u8]) -> Option<crossterm::event::KeyEvent> 
 fn decode_sgr_mouse_input(ansi_code: &[u8]) -> anyhow::Result<(u8, u16, u16)> {
     let ansi_str = std::str::from_utf8(ansi_code).map_err(|_| anyhow!("Invalid UTF-8 sequence"))?;
 
-    if !ansi_str.starts_with("\x1b[<") {
+    if !ansi_str.as_bytes().starts_with(SGR_MOUSE_PREFIX) {
         return Err(anyhow!("Invalid SGR ANSI mouse code"));
     }
 
@@ -86,13 +87,11 @@ fn convert_data_to_mouse_event(data: &[u8]) -> Option<crossterm::event::MouseEve
 }
 
 pub fn convert_data_to_terminal_event(data: &[u8]) -> Option<TerminalEvent> {
-    if let Some(size) = data.strip_prefix(&[CMD_RESIZE]) {
-        let cols = size.first().copied().unwrap_or(0) as u16;
-        let rows = size.last().copied().unwrap_or(0) as u16;
-        return Some(TerminalEvent::Resize(cols, rows));
+    if let Some(&[cols, rows]) = data.strip_prefix(&[CMD_RESIZE]) {
+        return Some(TerminalEvent::Resize(cols as u16, rows as u16));
     }
 
-    if data.starts_with(&[0x1b, b'[', b'<']) {
+    if data.starts_with(SGR_MOUSE_PREFIX) {
         return convert_data_to_mouse_event(data).map(TerminalEvent::Mouse);
     }
 
