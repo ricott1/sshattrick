@@ -52,22 +52,12 @@ impl server::Handler for AppClient {
     async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
-        session: &mut Session,
+        _session: &mut Session,
     ) -> AppResult<bool> {
         let app_channel = AppChannel::new(self.username.clone());
         if self.channels.insert(channel.id(), app_channel).is_some() {
             return Err(anyhow!("channel `{}` has been already opened", channel.id()));
         }
-
-        let ongoing = self.channels.len();
-        let games = if ongoing == 1 {
-            "is 1 ongoing game".to_string()
-        } else {
-            format!("are {ongoing} ongoing games")
-        };
-        let msg = format!("Connection opened, waiting for other player to join.\n\rThere {games}.\n\r");
-        let _ = session.handle().data(channel.id(), msg).await;
-
         Ok(true)
     }
 

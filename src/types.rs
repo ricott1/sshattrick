@@ -11,6 +11,15 @@ pub enum GameSide {
     Blue,
 }
 
+impl GameSide {
+    pub fn opposite(self) -> Self {
+        match self {
+            GameSide::Red => GameSide::Blue,
+            GameSide::Blue => GameSide::Red,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Palette {
     #[default]

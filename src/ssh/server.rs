@@ -2,6 +2,7 @@ use super::client::AppClient;
 use crate::game::{Game, GameState};
 use crate::tui::Tui;
 use crate::types::{AppResult, GameSide, TerminalEvent};
+use crate::utils::img_to_lines;
 use itertools::Either;
 use rand::RngExt;
 use russh::keys::ssh_key::private::{Ed25519Keypair, Ed25519PrivateKey, KeypairData};
@@ -45,7 +46,7 @@ pub struct AppServer {
 
 impl AppServer {
     pub fn new(port: u16) -> Self {
-        let (tui_sender, tui_receiver) = mpsc::channel(8);
+        let (tui_sender, tui_receiver) = mpsc::channel(64);
         Self {
             port,
             shutdown: CancellationToken::new(),
@@ -81,7 +82,8 @@ impl AppServer {
             .tui_receiver
             .take()
             .expect("AppServer::run called twice");
-        task::spawn(Self::matchmaker(tui_receiver));
+        let lobby_sender = self.tui_sender.clone();
+        task::spawn(Self::matchmaker(tui_receiver, lobby_sender));
 
         let shutdown = self.shutdown.clone();
         let server = self.run_on_address(Arc::new(config), ("0.0.0.0", self.port));
@@ -106,21 +108,38 @@ impl AppServer {
         }
     }
 
-    async fn matchmaker(mut tui_receiver: mpsc::Receiver<Tui>) {
-        let mut pending_tui: Option<Tui> = None;
-        while let Some(tui) = tui_receiver.recv().await {
-            if let Some(red_tui) = pending_tui.take() {
-                println!("Got second TUI for {}", tui.username());
-                Self::spawn_game(red_tui, tui);
-            } else {
-                println!("Got first TUI for {}", tui.username());
-                pending_tui = Some(tui);
+    async fn matchmaker(mut tui_receiver: mpsc::Receiver<Tui>, lobby_sender: Sender<Tui>) {
+        while let Some(mut pending) = tui_receiver.recv().await {
+            println!("Pending player: {}", pending.username());
+            refresh_lobby(&mut pending).await;
+
+            let mate = loop {
+                select! {
+                    next = tui_receiver.recv() => match next {
+                        Some(tui) => break Some(tui),
+                        None => return,
+                    },
+                    event = pending.next() => match event {
+                        TerminalEvent::Quit => {
+                            println!("Pending player {} disconnected", pending.username());
+                            break None;
+                        }
+                        TerminalEvent::Resize(_, _) => refresh_lobby(&mut pending).await,
+                        _ => {}
+                    }
+                }
+            };
+
+            if let Some(other) = mate {
+                Self::spawn_game(pending, other, lobby_sender.clone());
             }
         }
     }
 
-    fn spawn_game(mut red_tui: Tui, mut blue_tui: Tui) {
+    fn spawn_game(red_tui: Tui, blue_tui: Tui, lobby_sender: Sender<Tui>) {
         task::spawn(async move {
+            let mut red = Some(red_tui);
+            let mut blue = Some(blue_tui);
             let mut game = Game::new();
             println!("Game {} spawned", game.id);
 
@@ -129,69 +148,109 @@ impl AppServer {
             draw_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
             loop {
-                if let GameState::Ending { time } = game.state {
+                if let GameState::Ending { time, .. } = game.state {
                     if Instant::now() - time > AFTER_GAME_DELAY {
                         break;
                     }
+                }
+                if red.is_none() && blue.is_none() {
+                    break;
                 }
 
                 select! {
                     _ = update_ticker.tick() => {
                         if let Err(e) = game.update() {
-                            println!("Error updating game: {e}");
+                            log::error!("Error updating game: {e}");
                             break;
                         }
                     }
-
                     _ = draw_ticker.tick() => {
-                        if let Err(e) = Self::draw_and_push(&game, &mut red_tui, &mut blue_tui).await {
-                            println!("Error rendering game: {e}");
+                        if let Err(e) = Self::draw_and_push(&game, &mut red, &mut blue).await {
+                            log::error!("Error rendering game: {e}");
                             break;
                         }
                     }
-
-                    event = red_tui.next() => {
-                        if Self::handle_event(&mut game, GameSide::Red, event) {
-                            break;
-                        }
+                    event = next_or_pending(&mut red) => {
+                        Self::handle_event(&mut game, GameSide::Red, event, &mut red);
                     }
-
-                    event = blue_tui.next() => {
-                        if Self::handle_event(&mut game, GameSide::Blue, event) {
-                            break;
-                        }
+                    event = next_or_pending(&mut blue) => {
+                        Self::handle_event(&mut game, GameSide::Blue, event, &mut blue);
                     }
                 }
             }
 
-            let _ = red_tui.exit().await;
-            let _ = blue_tui.exit().await;
+            let winner = game.winner();
+
+            for (side, slot) in [(GameSide::Red, red), (GameSide::Blue, blue)] {
+                if let Some(mut tui) = slot {
+                    tui.record_game(winner == Some(side));
+                    let _ = lobby_sender.send(tui).await;
+                }
+            }
         });
     }
 
-    async fn draw_and_push(game: &Game, red_tui: &mut Tui, blue_tui: &mut Tui) -> AppResult<()> {
-        red_tui.draw(game)?;
-        blue_tui.draw(game)?;
-        let (red, blue) = tokio::join!(red_tui.push_data(), blue_tui.push_data());
-        red?;
-        blue?;
+    async fn draw_and_push(
+        game: &Game,
+        red: &mut Option<Tui>,
+        blue: &mut Option<Tui>,
+    ) -> AppResult<()> {
+        if red.is_none() && blue.is_none() {
+            return Ok(());
+        }
+        let image_lines = img_to_lines(&game.image()?);
+        for (slot, side) in [
+            (red.as_mut(), GameSide::Red),
+            (blue.as_mut(), GameSide::Blue),
+        ] {
+            if let Some(t) = slot {
+                t.draw(game, &image_lines, side)?;
+            }
+        }
+        match (red.as_mut(), blue.as_mut()) {
+            (Some(r), Some(b)) => {
+                let (a, c) = tokio::join!(r.push_data(), b.push_data());
+                a?;
+                c?;
+            }
+            (Some(t), None) | (None, Some(t)) => t.push_data().await?,
+            (None, None) => {}
+        }
         Ok(())
     }
 
-    fn handle_event(game: &mut Game, side: GameSide, event: TerminalEvent) -> bool {
+    fn handle_event(
+        game: &mut Game,
+        side: GameSide,
+        event: TerminalEvent,
+        own_tui: &mut Option<Tui>,
+    ) {
         match event {
-            TerminalEvent::Key(key) => {
-                game.handle_key_events(side, key.code);
-                false
-            }
+            TerminalEvent::Key(key) => game.handle_key_events(side, key.code),
             TerminalEvent::Quit => {
-                game.state = GameState::Ending {
-                    time: Instant::now(),
-                };
-                true
+                // Drop the quitter's Tui (Drop closes their channel); the survivor wins.
+                own_tui.take();
+                if !matches!(game.state, GameState::Ending { .. }) {
+                    game.end_with_winner(Some(side.opposite()), true);
+                }
             }
-            _ => false,
+            _ => {}
         }
+    }
+}
+
+async fn refresh_lobby(tui: &mut Tui) {
+    let _ = tui.draw_lobby();
+    let _ = tui.push_data().await;
+}
+
+/// Yield the next event from an `Option<Tui>`, or park the branch forever when
+/// the slot is empty. Used as a `select!` arm so a disconnected side simply
+/// stops firing without needing extra control flow.
+async fn next_or_pending(tui: &mut Option<Tui>) -> TerminalEvent {
+    match tui {
+        Some(t) => t.next().await,
+        None => std::future::pending().await,
     }
 }
 

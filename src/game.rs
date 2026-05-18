@@ -15,10 +15,19 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum GameState {
-    Starting { time: Instant },
+    Starting {
+        time: Instant,
+    },
     Running,
-    AfterGoal { time: Instant, scored: GameSide },
-    Ending { time: Instant },
+    AfterGoal {
+        time: Instant,
+        scored: GameSide,
+    },
+    Ending {
+        time: Instant,
+        winner: Option<GameSide>,
+        by_disconnect: bool,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -232,8 +241,9 @@ impl Game {
 
         self.puck.update(deltatime);
 
-        self.handle_puck_player_contact(GameSide::Red);
-        self.handle_puck_player_contact(GameSide::Blue);
+        for side in [GameSide::Red, GameSide::Blue] {
+            self.handle_puck_player_contact(side);
+        }
 
         if let Some(side) = self.puck.possession {
             let (player, other) = if side == GameSide::Red {
@@ -307,6 +317,29 @@ impl Game {
         data.handle_key_events(&mut self.puck, key_code);
     }
 
+    fn compute_winner(&self) -> Option<GameSide> {
+        match self.red_data.score.cmp(&self.blue_data.score) {
+            std::cmp::Ordering::Greater => Some(GameSide::Red),
+            std::cmp::Ordering::Less => Some(GameSide::Blue),
+            std::cmp::Ordering::Equal => None,
+        }
+    }
+
+    pub fn end_with_winner(&mut self, winner: Option<GameSide>, by_disconnect: bool) {
+        self.state = GameState::Ending {
+            time: Instant::now(),
+            winner,
+            by_disconnect,
+        };
+    }
+
+    pub fn winner(&self) -> Option<GameSide> {
+        match self.state {
+            GameState::Ending { winner, .. } => winner,
+            _ => None,
+        }
+    }
+
     pub fn update(&mut self) -> AppResult<()> {
         let now = Instant::now();
         let deltatime = now.duration_since(self.last_tick).as_millis() as f32;
@@ -321,9 +354,7 @@ impl Game {
                 self.update_running(deltatime)?;
                 self.timer += deltatime as u128;
                 if self.timer > Self::DURATION_MILLISECONDS {
-                    self.state = GameState::Ending {
-                        time: Instant::now(),
-                    };
+                    self.end_with_winner(self.compute_winner(), false);
                 }
             }
             GameState::AfterGoal { time, .. } => {

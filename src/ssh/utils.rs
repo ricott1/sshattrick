@@ -1,6 +1,6 @@
 use crate::types::TerminalEvent;
 use anyhow::anyhow;
-use crossterm::event::{KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 
 pub const CMD_RESIZE: u8 = 0x04;
 const SGR_MOUSE_PREFIX: &[u8] = b"\x1b[<";
@@ -98,6 +98,9 @@ pub fn convert_data_to_terminal_event(data: &[u8]) -> Option<TerminalEvent> {
     let key = convert_data_to_key_event(data)?;
     if key.kind != KeyEventKind::Press {
         return None;
+    }
+    if key.code == KeyCode::Esc {
+        return Some(TerminalEvent::Quit);
     }
     Some(TerminalEvent::Key(key))
 }

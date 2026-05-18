@@ -52,6 +52,22 @@ impl SSHWriterProxy {
         self.flushing = false;
         Ok(data_length)
     }
+
+    /// Hand the current sink off to a background task so the bytes still go
+    /// out when we can't await (e.g. inside Drop).
+    pub fn send_in_background(&mut self) {
+        if self.sink.is_empty() {
+            return;
+        }
+        let handle = self.handle.clone();
+        let channel_id = self.channel_id;
+        let data = std::mem::take(&mut self.sink);
+        self.flushing = false;
+        tokio::spawn(async move {
+            let _ = handle.data(channel_id, data).await;
+            let _ = handle.close(channel_id).await;
+        });
+    }
 }
 
 impl std::io::Write for SSHWriterProxy {
