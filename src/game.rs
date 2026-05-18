@@ -1,883 +1,177 @@
+use super::engine::{goalie::Goalie, player::Player, puck::Puck};
 use crate::{
-    big_text::{blue_scored, blue_won, dots, draw, red_scored, red_won, BigNumberFont},
+    collision_detection::{are_colliding, inelastic_collision},
+    constants::*,
+    engine::{area::Area, utils::RectSide},
+    traits::{Body, ColliderType, Entity, Sprite},
     types::*,
     utils::*,
 };
 use crossterm::event::KeyCode;
-use image::{Rgba, RgbaImage};
-use once_cell::sync::Lazy;
-use rand::Rng;
-use ratatui::{
-    layout::{Constraint, Layout, Margin, Position, Rect},
-    style::Color,
-    text::Line,
-    widgets::Paragraph,
-    Frame,
-};
-use std::time::Instant;
-
-const MINIMUM_DELTATIME_MILLISECONDS: f32 = 18.0;
-const GAME_DURATION_MILLISECONDS: u128 = 90 * 1000;
-const STARTING_DELAY_MILLISECONDS: u128 = 3000;
-const AFTER_GOAL_DELAY_MILLISECONDS: u128 = 2000;
-const ENDING_DELAY_MILLISECONDS: u128 = 1000;
-
-const MIN_X: f32 = 3.0;
-const MAX_X: f32 = 157.0;
-const MIN_Y: f32 = 3.0;
-const MAX_Y: f32 = 83.0;
-
-const GOALIE_AREA_WIDTH: f32 = 8.0;
-const GOALIE_AREA_HEIGHT: f32 = 26.0;
-const GOALIE_AREA_MIN_Y: f32 = 31.0;
-const GOALIE_AREA_MAX_Y: f32 = 55.0;
-
-const RED_INITIAL_POSITION: (f32, f32) = (20.0, 40.0);
-const BLUE_INITIAL_POSITION: (f32, f32) = (132.0, 40.0);
-
-const PUCK_WIDTH: f32 = 2.0;
-const PUCK_HEIGHT: f32 = 2.0;
-const GOALIE_WIDTH: f32 = 6.0;
-const GOALIE_HEIGHT: f32 = 7.0;
-
-const GOALIE_MIN_Y: f32 = 31.0;
-const GOALIE_MAX_Y: f32 = 48.0;
-
-const ACCELERATION: f32 = 0.2;
-const DECELERATION: f32 = 0.4;
-const MAX_PLAYER_VELOCITY: f32 = 1.3;
-const MAX_PUCK_VELOCITY: f32 = 2.2;
-
-const GOALIE_MASS: f32 = 1000.0;
-const PLAYER_MASS: f32 = 20.0;
-const PUCK_MASS: f32 = 1.0;
-
-const PLAYER_FRICTION_VELOCITY_LOSS: f32 = 0.975;
-const PUCK_FRICTION_VELOCITY_LOSS: f32 = 0.99;
-const COEFFICIENT_OF_RESTITUTION: f32 = 0.7;
-const COFFICIENT_OF_WALL_BOUNCING: f32 = 0.25;
-
-const SKATE_TRACE_LENGTH: usize = 512;
-
-const SHOOTING_COUNTER_MILLISECONDS: f32 = 350.0;
-const AFTER_SHOOTING_COUNTER_MILLISECONDS: f32 = 50.0;
-const AFTER_GOT_STOLEN_COUNTER_MILLISECONDS: f32 = 50.0;
-const SHOOTING_DIRECTION_MODIFIER: f32 = 0.35;
-const SHOOTING_POWER: f32 = 3.0;
-
-static PITCH_EMPTY: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("pitch_empty.png").expect("Could not read pitch_empty.png."));
-
-static PITCH_CLASSIC: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("pitch_classic.png").expect("Could not read pitch_classic.png."));
-
-static PITCH_BASKET: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("pitch_basket.png").expect("Could not read pitch_basket.png."));
-
-static PITCH_ALT: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("pitch_alt.png").expect("Could not read pitch_alt.png."));
-
-static PUCK_DARK: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("puck_white.png").expect("Could not read puck.png."));
-
-static PUCK_LIGHT: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("puck_black.png").expect("Could not read puck.png."));
-
-static PUCK_GOLD: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("puck_gold.png").expect("Could not read puck.png."));
-
-static RED_PLAYER: Lazy<Vec<RgbaImage>> = Lazy::new(|| {
-    let mut images = vec![];
-    for i in 1..=8 {
-        images.push(
-            read_image(format!("red{i}.png").as_str())
-                .expect(format!("Could not read red{i}.png.").as_str()),
-        );
-    }
-    images
-});
-
-static RED_GOALIE: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("red_goalie.png").expect("Could not read red_goalie.png."));
-
-static BLUE_PLAYER: Lazy<Vec<RgbaImage>> = Lazy::new(|| {
-    let mut images = vec![];
-    for i in 1..=8 {
-        images.push(
-            read_image(format!("blue{i}.png").as_str())
-                .expect(format!("Could not read blue{i}.png.").as_str()),
-        );
-    }
-    images
-});
-
-static BLUE_GOALIE: Lazy<RgbaImage> =
-    Lazy::new(|| read_image("blue_goalie.png").expect("Could not read blue_goalie.png."));
-
-fn base_image(palette: Palette) -> RgbaImage {
-    match palette {
-        Palette::Dark => PITCH_EMPTY.clone(),
-        Palette::Light => PITCH_CLASSIC.clone(),
-        Palette::Basket => PITCH_BASKET.clone(),
-        Palette::Alt => PITCH_ALT.clone(),
-    }
-}
-
-fn skate_trace_color(palette: Palette) -> Rgba<u8> {
-    match palette {
-        Palette::Dark => Rgba([55, 55, 85, 255]),
-        Palette::Light => Rgba([145, 215, 255, 255]),
-        Palette::Basket => Rgba([55, 55, 85, 255]),
-        Palette::Alt => Rgba([105, 55, 55, 255]),
-    }
-}
-
-fn puck_catcher_offset(orientation: Orientation) -> (f32, f32) {
-    match orientation {
-        Orientation::Up => (18.0, 0.0),
-        Orientation::UpLeft => (12.0, -2.0),
-        Orientation::Left => (0.0, 0.0),
-        Orientation::DownLeft => (-2.0, 1.0),
-        Orientation::Down => (0.0, 6.0),
-        Orientation::DownRight => (1.0, 15.0),
-        Orientation::Right => (6.0, 18.0),
-        Orientation::UpRight => (15.0, 12.0),
-    }
-}
-
-/// Simple collision detection using rectangles.
-/// Returns a boolean indicating if the two sprites are colliding.
-fn are_sprites_colliding(rect1: Rect, rect2: Rect) -> bool {
-    rect1.x < rect2.x + rect2.width
-        && rect1.x + rect1.width > rect2.x
-        && rect1.y < rect2.y + rect2.height
-        && rect1.y + rect1.height > rect2.y
-}
+use glam::{U16Vec2, Vec2};
+use image::RgbaImage;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq)]
-enum Orientation {
-    Up,
-    UpLeft,
-    Left,
-    DownLeft,
-    Down,
-    DownRight,
-    Right,
-    UpRight,
-}
-
-impl Orientation {
-    pub fn next(self) -> Self {
-        ((self as u8 + 1) % 8).into()
-    }
-
-    pub fn previous(self) -> Self {
-        ((self as u8 + 7) % 8).into()
-    }
-}
-
-impl From<u8> for Orientation {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Orientation::Up,
-            1 => Orientation::UpLeft,
-            2 => Orientation::Left,
-            3 => Orientation::DownLeft,
-            4 => Orientation::Down,
-            5 => Orientation::DownRight,
-            6 => Orientation::Right,
-            7 => Orientation::UpRight,
-            _ => panic!("Invalid orientation"),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum GameState {
-    // TODO: add character selection with different stats
-    Starting { time: Instant },
+pub enum GameState {
+    Starting {
+        time: Instant,
+    },
     Running,
-    AfterGoal { time: Instant, scored: GameSide },
-    Ending { time: Instant },
+    AfterGoal {
+        time: Instant,
+        scored: GameSide,
+    },
+    Ending {
+        time: Instant,
+        winner: Option<GameSide>,
+        by_disconnect: bool,
+    },
 }
 
-enum CollisionType {
-    Minimal,
-    Full,
-}
-#[derive(Clone, Copy, PartialEq)]
-enum Palette {
-    Dark,
-    Light,
-    Basket,
-    Alt,
+#[derive(Debug, Default)]
+pub struct GameData {
+    pub player: Player,
+    pub goalie: Goalie,
+    pub area: Area,
+    pub score: u8,
 }
 
-impl Palette {
-    pub fn next(&self) -> Self {
-        match self {
-            Palette::Dark => Palette::Light,
-            Palette::Light => Palette::Basket,
-            Palette::Basket => Palette::Alt,
-            Palette::Alt => Palette::Dark,
-        }
-    }
-}
-
-fn resolve_collision(
-    sprite1: &mut impl Body,
-    sprite2: &mut impl Body,
-    collision_type1: CollisionType,
-    collision_type2: CollisionType,
-) -> bool {
-    let rect1 = match collision_type1 {
-        CollisionType::Minimal => sprite1.minimal_collision_rect(),
-        CollisionType::Full => sprite1.full_collision_rect(),
-    };
-
-    let rect2 = match collision_type2 {
-        CollisionType::Minimal => sprite2.minimal_collision_rect(),
-        CollisionType::Full => sprite2.full_collision_rect(),
-    };
-
-    // Check collisions between players
-    if are_sprites_colliding(rect1, rect2) {
-        // Calculate new velocities by conservation of momentum
-        // Energy is dissipated in the collision by a factor ENERGY_LOSS
-        let velocity_com = (
-            (sprite1.velocity().0 * sprite1.mass() + sprite2.velocity().0 * sprite2.mass())
-                / (sprite1.mass() + sprite2.mass()),
-            (sprite1.velocity().1 * sprite1.mass() + sprite2.velocity().1 * sprite2.mass())
-                / (sprite1.mass() + sprite2.mass()),
-        );
-
-        sprite1.set_velocity((
-            (1.0 + COEFFICIENT_OF_RESTITUTION) * velocity_com.0
-                - COEFFICIENT_OF_RESTITUTION * sprite1.velocity().0,
-            (1.0 + COEFFICIENT_OF_RESTITUTION) * velocity_com.1
-                - COEFFICIENT_OF_RESTITUTION * sprite1.velocity().1,
-        ));
-
-        sprite2.set_velocity((
-            (1.0 + COEFFICIENT_OF_RESTITUTION) * velocity_com.0
-                - COEFFICIENT_OF_RESTITUTION * sprite2.velocity().0,
-            (1.0 + COEFFICIENT_OF_RESTITUTION) * velocity_com.1
-                - COEFFICIENT_OF_RESTITUTION * sprite2.velocity().1,
-        ));
-        return true;
-    }
-
-    false
-}
-
-trait Body {
-    fn position(&self) -> (f32, f32);
-    fn set_position(&mut self, position: (f32, f32));
-    fn velocity(&self) -> (f32, f32);
-    fn set_velocity(&mut self, velocity: (f32, f32));
-    fn size(&self) -> (f32, f32);
-    fn full_collision_rect(&self) -> Rect {
-        let (x, y) = self.position();
-        let (w, h) = self.size();
-        Rect {
-            x: x as u16,
-            y: y as u16,
-            width: w as u16,
-            height: h as u16,
-        }
-    }
-    fn minimal_collision_rect(&self) -> Rect {
-        let (x, y) = self.position();
-        let (w, h) = self.size();
-        Rect {
-            x: x as u16,
-            y: y as u16,
-            width: w as u16,
-            height: h as u16,
-        }
-    }
-    fn mass(&self) -> f32;
-    fn update(&mut self, _deltatime: f32) {}
-    fn image(&self, palette: Palette) -> RgbaImage;
-}
-
-#[derive(Clone)]
-pub struct Puck {
-    position: (f32, f32),
-    velocity: (f32, f32),
-    possession: Option<GameSide>,
-}
-
-impl Puck {
-    pub fn new() -> Self {
-        // Pick random number from o or 1
-        if rand::thread_rng().gen_range(0..=1) == 0 {
-            Self {
-                position: (79.0, MIN_Y),
-                velocity: (0.0, 1.0),
-                possession: None,
-            }
-        } else {
-            Self {
-                position: (79.0, MAX_Y),
-                velocity: (0.0, -1.0),
-                possession: None,
-            }
-        }
-    }
-
-    pub fn has_scored(&self) -> Option<GameSide> {
-        if self.position.0 <= MIN_X
-            && self.position.1 >= GOALIE_AREA_MIN_Y
-            && self.position.1 <= GOALIE_AREA_MAX_Y - PUCK_HEIGHT
-        {
-            return Some(GameSide::Blue);
-        }
-        if self.position.0 >= MAX_X - PUCK_WIDTH
-            && self.position.1 >= GOALIE_AREA_MIN_Y
-            && self.position.1 <= GOALIE_AREA_MAX_Y - PUCK_HEIGHT
-        {
-            return Some(GameSide::Red);
-        }
-        None
-    }
-
-    pub fn attach_to_player(&mut self, player: &Player) {
-        let offset = puck_catcher_offset(player.orientation);
-        self.set_position((player.position.0 + offset.0, player.position.1 + offset.1));
-        self.velocity = player.velocity;
-    }
-
-    pub fn can_be_catched_by_player(&self, player: &Player) -> bool {
-        // Puck can be catched if it is not in possession of any player
-        // and the player catcher pixel overlaps with the puck full collision rect.
-        let catcher_position = player.catcher_position();
-        let position = Position {
-            x: catcher_position.0 as u16,
-            y: catcher_position.1 as u16,
-        };
-        self.possession.is_none()
-            && player.after_shooting_counter == 0.0
-            && self.full_collision_rect().contains(position)
-    }
-
-    pub fn can_be_stolen_by_player(&self, player: &Player) -> bool {
-        // Puck can be stolen if it is in possession of the other player
-        // and the player catcher pixel overlaps with the puck full collision rect.
-        let catcher_position = player.catcher_position();
-        let position = Position {
-            x: catcher_position.0 as u16,
-            y: catcher_position.1 as u16,
-        };
-        self.possession.is_some()
-            && self.possession.unwrap() != player.side
-            && player.after_got_stolen_counter == 0.0
-            && self.minimal_collision_rect().contains(position)
-    }
-}
-
-impl Body for Puck {
-    fn position(&self) -> (f32, f32) {
-        self.position
-    }
-
-    fn set_position(&mut self, position: (f32, f32)) {
-        let (w1, h1) = self.size();
-        let (mut new_x1, mut new_y1) = position;
-        if new_x1 < MIN_X {
-            new_x1 = MIN_X;
-            self.set_velocity((-self.velocity.0, self.velocity.1));
-        } else if new_x1 + w1 > MAX_X {
-            new_x1 = MAX_X - w1;
-            self.set_velocity((-self.velocity.0, self.velocity.1));
-        }
-
-        if new_y1 < MIN_Y {
-            new_y1 = MIN_Y;
-            self.set_velocity((self.velocity.0, -self.velocity.1));
-        } else if new_y1 + h1 > MAX_Y {
-            new_y1 = MAX_Y - h1;
-            self.set_velocity((self.velocity.0, -self.velocity.1));
-        }
-
-        self.position = (new_x1, new_y1);
-    }
-
-    fn velocity(&self) -> (f32, f32) {
-        self.velocity
-    }
-
-    fn set_velocity(&mut self, velocity: (f32, f32)) {
-        let (mut vx, mut vy) = velocity;
-        let speed = (vx.powf(2.0) + vy.powf(2.0)).sqrt();
-        if speed > MAX_PUCK_VELOCITY {
-            vx = vx * MAX_PUCK_VELOCITY / speed;
-            vy = vy * MAX_PUCK_VELOCITY / speed;
-        }
-        self.velocity = (vx, vy);
-    }
-
-    fn size(&self) -> (f32, f32) {
-        (PUCK_WIDTH, PUCK_HEIGHT)
-    }
-
-    fn mass(&self) -> f32 {
-        PUCK_MASS
-    }
-
-    fn full_collision_rect(&self) -> Rect {
-        // A 6x6 rect around the puck
-        let (x, y) = self.position();
-        let (w, h) = self.size();
-        Rect {
-            x: x as u16 - 2,
-            y: y as u16 - 2,
-            width: w as u16 + 4,
-            height: h as u16 + 4,
-        }
-    }
-
-    fn update(&mut self, deltatime: f32) {
-        let (x, y) = self.position();
-        let (vx, vy) = self.velocity();
-        // Apply friction
-        self.set_velocity((
-            vx * PUCK_FRICTION_VELOCITY_LOSS,
-            vy * PUCK_FRICTION_VELOCITY_LOSS,
-        ));
-        let (vx, vy) = self.velocity();
-        self.set_position((x + vx * deltatime, y + vy * deltatime));
-    }
-
-    fn image(&self, palette: Palette) -> RgbaImage {
-        match palette {
-            Palette::Dark => PUCK_DARK.clone(),
-            Palette::Light => PUCK_LIGHT.clone(),
-            Palette::Basket => PUCK_DARK.clone(),
-            Palette::Alt => PUCK_GOLD.clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Player {
-    side: GameSide,
-    position: (f32, f32),
-    velocity: (f32, f32),
-    orientation: Orientation,
-    new_orientation: Option<Orientation>,
-    shooting_direction: Option<(f32, f32)>,
-    shooting_counter: f32,
-    after_shooting_counter: f32,
-    after_got_stolen_counter: f32,
-}
-
-impl Player {
+impl GameData {
     pub fn new(side: GameSide) -> Self {
-        let position = match side {
-            GameSide::Red => RED_INITIAL_POSITION,
-            GameSide::Blue => BLUE_INITIAL_POSITION,
-        };
-        let orientation = match side {
-            GameSide::Red => Orientation::Right,
-            GameSide::Blue => Orientation::Left,
-        };
         Self {
-            side,
-            position,
-            velocity: (0.0, 0.0),
-            orientation,
-            new_orientation: None,
-            shooting_direction: None,
-            shooting_counter: 0.0,
-            after_shooting_counter: 0.0,
-            after_got_stolen_counter: 0.0,
+            player: Player::new(side),
+            goalie: Goalie::new(side),
+            area: Area::new(side),
+            score: 0,
         }
     }
 
     pub fn reset(&mut self) {
-        self.position = match self.side {
-            GameSide::Red => RED_INITIAL_POSITION,
-            GameSide::Blue => BLUE_INITIAL_POSITION,
+        self.player.reset();
+    }
+
+    pub fn handle_key_events(&mut self, puck: &mut Puck, key_code: KeyCode) {
+        let player = &mut self.player;
+        if player.shooting_state.is_shooting() {
+            let shooting_modifier = match key_code {
+                KeyCode::Up => Vec2::NEG_Y * SHOOTING_DIRECTION_MODIFIER,
+                KeyCode::Down => Vec2::Y * SHOOTING_DIRECTION_MODIFIER,
+                KeyCode::Left => Vec2::NEG_X * SHOOTING_DIRECTION_MODIFIER,
+                KeyCode::Right => Vec2::X * SHOOTING_DIRECTION_MODIFIER,
+                _ => Vec2::ZERO,
+            };
+            let current = player.shooting_state.direction.unwrap_or(player.velocity);
+            player.shooting_state.direction =
+                Some((current + shooting_modifier).clamp_length_max(SHOOTING_DIRECTION_MAX_MAGNITUDE));
+            return;
+        }
+
+        if key_code == KeyCode::Char(' ') && player.after_shooting_counter == 0.0 {
+            if puck.possession == Some(player.side) {
+                player.velocity *= SHOOTING_VELOCITY_DAMPING;
+                puck.velocity *= SHOOTING_VELOCITY_DAMPING;
+                player.new_orientation = Some(player.orientation.previous());
+                player
+                    .shooting_state
+                    .shoot(player.orientation.shooting_direction());
+            }
+            return;
+        }
+
+        let natural_orientation = match key_code {
+            KeyCode::Up => {
+                apply_axis_input(&mut player.velocity.y, -1.0);
+                Orientation::UpLeft
+            }
+            KeyCode::Down => {
+                apply_axis_input(&mut player.velocity.y, 1.0);
+                Orientation::DownRight
+            }
+            KeyCode::Left => {
+                apply_axis_input(&mut player.velocity.x, -1.0);
+                Orientation::DownLeft
+            }
+            KeyCode::Right => {
+                apply_axis_input(&mut player.velocity.x, 1.0);
+                Orientation::UpRight
+            }
+            _ => player.orientation,
         };
-        self.velocity = (0.0, 0.0);
-        self.orientation = match self.side {
-            GameSide::Red => Orientation::Right,
-            GameSide::Blue => Orientation::Left,
-        };
-        self.new_orientation = None;
-        self.shooting_direction = None;
-        self.shooting_counter = 0.0;
-        self.after_shooting_counter = 0.0;
-    }
 
-    pub fn catcher_position(&self) -> (f32, f32) {
-        let offset = puck_catcher_offset(self.orientation);
-        (self.position.0 + offset.0, self.position.1 + offset.1)
-    }
-
-    fn head_position_offset(&self) -> (u16, u16) {
-        match self.orientation {
-            Orientation::Up => (4, 3),
-            Orientation::UpLeft => (5, 10),
-            Orientation::Left => (3, 13),
-            Orientation::DownLeft => (10, 7),
-            Orientation::Down => (13, 2),
-            Orientation::DownRight => (7, 2),
-            Orientation::Right => (2, 4),
-            Orientation::UpRight => (2, 5),
-        }
-    }
-
-    fn rotate(&mut self, new_orientation: Orientation) {
-        let previous_head_position = (
-            self.position.0 + self.head_position_offset().0 as f32,
-            self.position.1 + self.head_position_offset().1 as f32,
-        );
-        self.orientation = new_orientation;
-        self.new_orientation = None;
-        // After rotating, realign the player so that the head position did not change
-        let new_head_position = (
-            self.position.0 + self.head_position_offset().0 as f32,
-            self.position.1 + self.head_position_offset().1 as f32,
-        );
-        let (dx, dy) = (
-            previous_head_position.0 - new_head_position.0,
-            previous_head_position.1 - new_head_position.1,
-        );
-        self.position = (self.position.0 + dx, self.position.1 + dy);
-    }
-}
-
-impl Body for Player {
-    fn position(&self) -> (f32, f32) {
-        self.position
-    }
-
-    fn set_position(&mut self, position: (f32, f32)) {
-        let (w1, h1) = self.size();
-        let (mut new_x1, mut new_y1) = position;
-        if new_x1 < MIN_X {
-            new_x1 = MIN_X;
-            self.set_velocity((
-                -COFFICIENT_OF_WALL_BOUNCING * self.velocity.0,
-                self.velocity.1,
-            ));
-        } else if new_x1 + w1 > MAX_X {
-            new_x1 = MAX_X - w1;
-            self.set_velocity((
-                -COFFICIENT_OF_WALL_BOUNCING * self.velocity.0,
-                self.velocity.1,
-            ));
-        }
-
-        if new_y1 < MIN_Y {
-            new_y1 = MIN_Y;
-            self.set_velocity((
-                -COFFICIENT_OF_WALL_BOUNCING * self.velocity.0,
-                -COFFICIENT_OF_WALL_BOUNCING * self.velocity.1,
-            ));
-        } else if new_y1 + h1 > MAX_Y {
-            new_y1 = MAX_Y - h1;
-            self.set_velocity((
-                -COFFICIENT_OF_WALL_BOUNCING * self.velocity.0,
-                -COFFICIENT_OF_WALL_BOUNCING * self.velocity.1,
-            ));
-        }
-
-        self.position = (new_x1, new_y1);
-    }
-
-    fn velocity(&self) -> (f32, f32) {
-        self.velocity
-    }
-
-    fn set_velocity(&mut self, velocity: (f32, f32)) {
-        let (mut vx, mut vy) = velocity;
-        let speed = (vx.powf(2.0) + vy.powf(2.0)).sqrt();
-        if speed > MAX_PLAYER_VELOCITY {
-            vx = vx * MAX_PLAYER_VELOCITY / speed;
-            vy = vy * MAX_PLAYER_VELOCITY / speed;
-        }
-        self.velocity = (vx, vy);
-    }
-
-    fn size(&self) -> (f32, f32) {
-        match self.orientation {
-            Orientation::Up | Orientation::Down => (20.0, 8.0),
-            Orientation::Left | Orientation::Right => (8.0, 20.0),
-            _ => (15.0, 15.0),
-        }
-    }
-
-    fn minimal_collision_rect(&self) -> Rect {
-        let (x, y) = self.position();
-
-        match self.orientation {
-            Orientation::Up => Rect {
-                x: x as u16,
-                y: y as u16,
-                width: 14,
-                height: 8,
-            },
-            Orientation::UpLeft => Rect {
-                x: x as u16,
-                y: y as u16 + 5,
-                width: 13,
-                height: 10,
-            },
-            Orientation::Left => Rect {
-                x: x as u16,
-                y: y as u16 + 6,
-                width: 8,
-                height: 14,
-            },
-            Orientation::DownLeft => Rect {
-                x: x as u16 + 5,
-                y: y as u16 + 2,
-                width: 10,
-                height: 13,
-            },
-            Orientation::Down => Rect {
-                x: x as u16 + 6,
-                y: y as u16,
-                width: 14,
-                height: 8,
-            },
-            Orientation::DownRight => Rect {
-                x: x as u16 + 2,
-                y: y as u16,
-                width: 13,
-                height: 10,
-            },
-            Orientation::Right => Rect {
-                x: x as u16,
-                y: y as u16,
-                width: 8,
-                height: 14,
-            },
-            Orientation::UpRight => Rect {
-                x: x as u16,
-                y: y as u16,
-                width: 10,
-                height: 13,
-            },
-        }
-    }
-
-    fn mass(&self) -> f32 {
-        PLAYER_MASS
-    }
-
-    fn update(&mut self, deltatime: f32) {
-        if let Some(new_orientation) = self.new_orientation {
-            self.rotate(new_orientation);
-        }
-
-        let (x, y) = self.position();
-        let (vx, vy) = self.velocity();
-        // Apply friction
-        self.set_velocity((
-            vx * PLAYER_FRICTION_VELOCITY_LOSS,
-            vy * PLAYER_FRICTION_VELOCITY_LOSS,
-        ));
-        let (vx, vy) = self.velocity();
-
-        self.set_position((x + vx * deltatime, y + vy * deltatime));
-
-        if self.after_shooting_counter > 0.0 {
-            self.after_shooting_counter = (self.after_shooting_counter - deltatime).max(0.0);
-        }
-
-        if self.after_got_stolen_counter > 0.0 {
-            self.after_got_stolen_counter = (self.after_got_stolen_counter - deltatime).max(0.0);
-        }
-    }
-
-    fn image(&self, _: Palette) -> RgbaImage {
-        match self.side {
-            GameSide::Red => RED_PLAYER[self.orientation as usize].clone(),
-            GameSide::Blue => BLUE_PLAYER[self.orientation as usize].clone(),
+        if player.velocity.length() > 0.0 && player.orientation != natural_orientation {
+            let diff = (natural_orientation as isize - player.orientation as isize + 8) % 8;
+            player.new_orientation = Some(if diff > 4 {
+                player.orientation.previous()
+            } else {
+                player.orientation.next()
+            });
         }
     }
 }
 
-#[derive(Clone)]
-pub struct Goalie {
-    side: GameSide,
-    position: (f32, f32),
-    velocity: (f32, f32),
-    saves: usize,
+fn apply_axis_input(axis: &mut f32, direction: f32) {
+    let opposing = axis.signum() != direction.signum() && *axis != 0.0;
+    let delta = if opposing { DECELERATION } else { ACCELERATION };
+    *axis += direction * delta;
 }
 
-impl Goalie {
-    pub fn new(side: GameSide) -> Self {
-        let position = match side {
-            GameSide::Red => (MIN_X, RED_INITIAL_POSITION.1),
-            GameSide::Blue => (MAX_X - GOALIE_WIDTH, BLUE_INITIAL_POSITION.1),
-        };
-        let velocity = (0.0, 0.0);
-
-        Self {
-            side,
-            position,
-            velocity,
-            saves: 0,
-        }
-    }
-}
-
-impl Body for Goalie {
-    fn position(&self) -> (f32, f32) {
-        self.position
-    }
-
-    fn set_position(&mut self, position: (f32, f32)) {
-        self.position.1 = position.1.min(GOALIE_MAX_Y).max(GOALIE_MIN_Y);
-    }
-
-    fn velocity(&self) -> (f32, f32) {
-        self.velocity
-    }
-
-    fn set_velocity(&mut self, velocity: (f32, f32)) {
-        // Goalies only have a vertical velocity
-        self.velocity = (0.0, velocity.1);
-    }
-
-    fn size(&self) -> (f32, f32) {
-        (GOALIE_WIDTH, GOALIE_HEIGHT)
-    }
-
-    fn full_collision_rect(&self) -> Rect {
-        match self.side {
-            GameSide::Red => Rect {
-                x: MIN_X as u16,
-                y: GOALIE_MIN_Y as u16 - 1,
-                width: GOALIE_AREA_WIDTH as u16,
-                height: GOALIE_AREA_HEIGHT as u16,
-            },
-            GameSide::Blue => Rect {
-                x: (MAX_X - GOALIE_AREA_WIDTH) as u16,
-                y: GOALIE_MIN_Y as u16 - 1,
-                width: GOALIE_AREA_WIDTH as u16,
-                height: GOALIE_AREA_HEIGHT as u16,
-            },
-        }
-    }
-
-    fn mass(&self) -> f32 {
-        GOALIE_MASS
-    }
-
-    fn update(&mut self, _deltatime: f32) {}
-
-    fn image(&self, _: Palette) -> RgbaImage {
-        match self.side {
-            GameSide::Red => RED_GOALIE.clone(),
-            GameSide::Blue => BLUE_GOALIE.clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Client {
-    id: usize,
-    terminal: SshTerminal,
-    is_connected: bool,
-    palette: Palette,
-}
-
-impl Client {
-    pub fn new(id: usize, terminal: SshTerminal) -> Self {
-        Self {
-            id,
-            terminal,
-            is_connected: true,
-            palette: Palette::Dark,
-        }
-    }
-
-    pub fn clear(&mut self) -> AppResult<()> {
-        if self.is_connected {
-            self.terminal.draw(|f| {
-                let mut lines = vec![];
-                for _ in 0..f.size().height {
-                    lines.push(Line::from(" ".repeat(f.size().width.into())));
-                }
-                let clear = Paragraph::new(lines).style(Color::White);
-                f.render_widget(clear, f.size());
-            })?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
 pub struct Game {
-    red_client: Client,
-    blue_client: Client,
-    red_player: Player,
-    blue_player: Player,
-    red_goalie: Goalie,
-    blue_goalie: Goalie,
-    red_score: u8,
-    blue_score: u8,
-    puck: Puck,
-    skate_traces: Vec<(f32, f32)>,
     pub id: uuid::Uuid,
-    timer: u128,
-    last_tick: Instant,
-    fps: f32,
-    state: GameState,
+    pub red_data: GameData,
+    pub blue_data: GameData,
+    pub puck: Puck,
+    pub skate_traces: VecDeque<U16Vec2>,
+    pub timer: u128,
+    pub last_tick: Instant,
+    pub state: GameState,
+    pub palette: Palette,
+    /// Solo practice: the local player controls Red; Blue has no human
+    /// player and Blue's goalie wanders at random.
+    pub practice_mode: bool,
 }
 
 impl Game {
-    pub fn new(red_client: (usize, SshTerminal), blue_client: (usize, SshTerminal)) -> Self {
-        let mut game = Self {
-            red_client: Client::new(red_client.0, red_client.1),
-            blue_client: Client::new(blue_client.0, blue_client.1),
-            red_player: Player::new(GameSide::Red),
-            blue_player: Player::new(GameSide::Blue),
-            red_goalie: Goalie::new(GameSide::Red),
-            blue_goalie: Goalie::new(GameSide::Blue),
-            red_score: 0,
-            blue_score: 0,
+    pub const DURATION_MILLISECONDS: u128 = 90 * 1000;
+    pub const STARTING_DELAY_MILLISECONDS: u64 = 3000;
+    const AFTER_GOAL_DELAY_MILLISECONDS: u128 = 2000;
+
+    pub fn new() -> Self {
+        Self::with_practice(false)
+    }
+
+    pub fn new_practice() -> Self {
+        Self::with_practice(true)
+    }
+
+    fn with_practice(practice_mode: bool) -> Self {
+        Self {
+            red_data: GameData::new(GameSide::Red),
+            blue_data: GameData::new(GameSide::Blue),
             puck: Puck::new(),
-            skate_traces: vec![],
+            skate_traces: VecDeque::new(),
             id: uuid::Uuid::new_v4(),
             timer: 0,
             last_tick: Instant::now(),
-            fps: 0.0,
             state: GameState::Starting {
                 time: Instant::now(),
             },
-        };
-
-        game.red_client
-            .clear()
-            .unwrap_or_else(|e| log::error!("Failed to clear red client terminal: {e}"));
-        game.blue_client
-            .clear()
-            .unwrap_or_else(|e| log::error!("Failed to clear red client terminal: {e}"));
-        game
-    }
-
-    pub fn clear_client(&mut self, client_id: usize) {
-        if self.red_client.id == client_id {
-            self.red_client
-                .clear()
-                .unwrap_or_else(|e| log::error!("Failed to clear red client terminal: {e}"));
-        } else {
-            self.blue_client
-                .clear()
-                .unwrap_or_else(|e| log::error!("Failed to clear red client terminal: {e}"));
+            palette: Palette::default(),
+            practice_mode,
         }
     }
 
-    fn reset(&mut self) {
-        self.red_player.reset();
-        self.blue_player.reset();
+    fn data_mut(&mut self, side: GameSide) -> &mut GameData {
+        match side {
+            GameSide::Red => &mut self.red_data,
+            GameSide::Blue => &mut self.blue_data,
+        }
+    }
+
+    fn reset_after_goal(&mut self) {
+        self.red_data.reset();
+        self.blue_data.reset();
         self.puck = Puck::new();
         self.state = GameState::Starting {
             time: Instant::now(),
@@ -885,1105 +179,728 @@ impl Game {
         self.skate_traces.clear();
     }
 
-    fn close(&mut self) {
-        self.red_client.is_connected = false;
-        self.blue_client.is_connected = false;
+    pub fn reset(&mut self) {
+        self.reset_after_goal();
+        self.red_data.score = 0;
+        self.blue_data.score = 0;
+        self.timer = 0;
     }
 
-    pub fn disconnect(&mut self, client_id: usize) {
-        if self.red_client.id == client_id {
-            self.red_client.is_connected = false;
-        } else {
-            self.blue_client.is_connected = false;
-        }
-    }
+    fn update_running(&mut self, deltatime: f32) -> AppResult<()> {
+        for player in [&mut self.red_data.player, &mut self.blue_data.player] {
+            player.update(deltatime);
+            player.maybe_bounce_against_rect(
+                PITCH_INNER_RECT,
+                COFFICIENT_OF_WALL_BOUNCING,
+                RectSide::Inside,
+            );
 
-    pub fn is_over(&self) -> bool {
-        matches!(self.state, GameState::Ending { .. })
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.red_client.is_connected && self.blue_client.is_connected
-    }
-
-    pub fn client_ids(&self) -> (usize, usize) {
-        (self.red_client.id, self.blue_client.id)
-    }
-
-    pub fn handle_input(&mut self, client_id: usize, key_code: KeyCode) {
-        if key_code == KeyCode::Esc {
-            self.disconnect(client_id);
-            return;
-        }
-
-        if key_code == KeyCode::Char('p') {
-            if self.red_client.id == client_id {
-                self.red_client.palette = self.red_client.palette.next();
-            } else {
-                self.blue_client.palette = self.blue_client.palette.next();
+            if are_colliding(player, &self.red_data.area).is_some() {
+                inelastic_collision(player, &mut self.red_data.area, AREA_RESTITUTION);
+            } else if are_colliding(player, &self.blue_data.area).is_some() {
+                inelastic_collision(player, &mut self.blue_data.area, AREA_RESTITUTION);
             }
-            return;
         }
 
-        if self.state != GameState::Running {
-            return;
+        if !self.practice_mode {
+            if let Some((a, b)) = are_colliding(&self.red_data.player, &self.blue_data.player) {
+                if !matches!((a, b), (ColliderType::Catcher, ColliderType::Catcher)) {
+                    // inelastic_collision resets both players to previous_position()
+                    // (U16Vec2), discarding sub-pixel separation, so we read the
+                    // floats now to keep a direction for the impulse normal.
+                    let red_pre = self.red_data.player.position_float();
+                    let blue_pre = self.blue_data.player.position_float();
+
+                    inelastic_collision(
+                        &mut self.red_data.player,
+                        &mut self.blue_data.player,
+                        PLAYER_PLAYER_RESTITUTION,
+                    );
+                    if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
+                        let mut normal = (blue_pre - red_pre).normalize_or_zero();
+                        if normal == Vec2::ZERO {
+                            // Float positions also coincided; pick any axis so
+                            // they still separate.
+                            normal = Vec2::X;
+                            log::warn!(
+                                "player-player overlap with coincident float positions: red={red_pre} blue={blue_pre}; using fallback normal"
+                            );
+                        }
+                        self.red_data.player.velocity -= normal * PLAYER_SEPARATION_IMPULSE;
+                        self.blue_data.player.velocity += normal * PLAYER_SEPARATION_IMPULSE;
+
+                        if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
+                            log::warn!(
+                                "player-player STILL colliding after impulse: \
+                                 red_pre={red_pre} blue_pre={blue_pre} \
+                                 v_red={} v_blue={} normal={normal} \
+                                 colliders=({a:?},{b:?})",
+                                self.red_data.player.velocity,
+                                self.blue_data.player.velocity,
+                            );
+                        }
+                    }
+                }
+            }
         }
 
-        let player = if self.red_client.id == client_id {
-            &mut self.red_player
+        for player in [&mut self.red_data.player, &mut self.blue_data.player] {
+            if let Some(new_orientation) = player.new_orientation {
+                player.rotate(new_orientation);
+                if are_colliding(player, &self.red_data.area).is_some()
+                    || are_colliding(player, &self.blue_data.area).is_some()
+                {
+                    player.undo_rotation();
+                }
+            }
+        }
+        if !self.practice_mode
+            && are_colliding(&self.red_data.player, &self.blue_data.player).is_some()
+        {
+            self.red_data.player.undo_rotation();
+            self.blue_data.player.undo_rotation();
+        }
+
+        for player in [&self.red_data.player, &self.blue_data.player] {
+            if player.position() != player.previous_position() {
+                let head_position = player.position() + player.head_position_offset();
+                self.skate_traces.push_back(head_position);
+            }
+        }
+        while self.skate_traces.len() > SKATE_TRACE_LENGTH {
+            self.skate_traces.pop_front();
+        }
+
+        self.red_data.goalie.align_to_player(&self.red_data.player);
+        if self.practice_mode {
+            self.blue_data.goalie.random_walk(deltatime);
         } else {
-            &mut self.blue_player
+            self.blue_data.goalie.align_to_player(&self.blue_data.player);
+        }
+
+        self.puck.update(deltatime);
+
+        let contact_sides: &[GameSide] = if self.practice_mode {
+            &[GameSide::Red]
+        } else {
+            &[GameSide::Red, GameSide::Blue]
+        };
+        for &side in contact_sides {
+            self.handle_puck_player_contact(side);
+        }
+
+        if let Some(side) = self.puck.possession {
+            let (player, other) = if side == GameSide::Red {
+                (&mut self.red_data.player, &mut self.blue_data.player)
+            } else {
+                (&mut self.blue_data.player, &mut self.red_data.player)
+            };
+
+            if let Some(direction) = player.shooting_state.shot_towards(deltatime) {
+                player.after_shooting_counter = AFTER_SHOOTING_COUNTER_MILLISECONDS;
+                player.new_orientation = Some(player.orientation.next());
+                self.puck.possession = None;
+                self.puck.velocity = direction * SHOOTING_POWER;
+            } else {
+                self.puck.attach_to_player(player);
+            }
+
+            if other.shooting_state.is_shooting() {
+                other.shooting_state.reset();
+            }
+        }
+
+        for goalie in [&mut self.red_data.goalie, &mut self.blue_data.goalie] {
+            let colliding = are_colliding(&self.puck, goalie).is_some();
+            if colliding {
+                inelastic_collision(&mut self.puck, goalie, GOALIE_RESTITUTION);
+            }
+            goalie.register_puck_contact(colliding, self.puck.possession.is_none());
+        }
+
+        if let Some(scored) = self.puck.has_scored() {
+            self.data_mut(scored).score += 1;
+            self.state = GameState::AfterGoal {
+                time: Instant::now(),
+                scored,
+            };
+        }
+
+        Ok(())
+    }
+
+    fn handle_puck_player_contact(&mut self, side: GameSide) {
+        let (own, opp) = match side {
+            GameSide::Red => (&mut self.red_data, &mut self.blue_data),
+            GameSide::Blue => (&mut self.blue_data, &mut self.red_data),
         };
 
-        if player.shooting_counter > 0.0 {
-            let mut shooting_direction = player.shooting_direction.unwrap_or(player.velocity);
+        // After shooting, briefly refuse to re-grab the puck so it has time to
+        // fly out of our own catcher area.
+        let just_shot = own.player.after_shooting_counter > 0.0;
 
-            match key_code {
-                KeyCode::Up => {
-                    shooting_direction = (
-                        shooting_direction.0,
-                        shooting_direction.1 - SHOOTING_DIRECTION_MODIFIER,
-                    );
-                }
-                KeyCode::Down => {
-                    shooting_direction = (
-                        shooting_direction.0,
-                        shooting_direction.1 + SHOOTING_DIRECTION_MODIFIER,
-                    );
-                }
-                KeyCode::Left => {
-                    shooting_direction = (
-                        shooting_direction.0 - SHOOTING_DIRECTION_MODIFIER,
-                        shooting_direction.1,
-                    );
-                }
-                KeyCode::Right => {
-                    shooting_direction = (
-                        shooting_direction.0 + SHOOTING_DIRECTION_MODIFIER,
-                        shooting_direction.1,
-                    );
-                }
-                _ => {}
-            }
-            player.shooting_direction = Some(shooting_direction);
-        } else {
-            // Shooting
-            if key_code == KeyCode::Char(' ') && player.after_shooting_counter == 0.0 {
-                if let Some(side) = self.puck.possession {
-                    if side == player.side {
-                        player.shooting_counter = SHOOTING_COUNTER_MILLISECONDS;
-                        player.velocity.0 *= 0.85;
-                        player.velocity.1 *= 0.85;
-                        self.puck.velocity.0 *= 0.85;
-                        self.puck.velocity.1 *= 0.85;
-                        player.new_orientation = Some(player.orientation.previous());
-                        // Set shooting direction to the current orientation
-                        // offset by 1 so that we shoot in the movement direction
-                        player.shooting_direction = match player.orientation {
-                            Orientation::Up => Some((1.0, -1.0).normalize()),
-                            Orientation::UpLeft => Some((0.0, -1.0).normalize()),
-                            Orientation::Left => Some((-1.0, -1.0).normalize()),
-                            Orientation::DownLeft => Some((-1.0, 0.0).normalize()),
-                            Orientation::Down => Some((-1.0, 1.0).normalize()),
-                            Orientation::DownRight => Some((0.0, 1.0).normalize()),
-                            Orientation::Right => Some((1.0, 1.0).normalize()),
-                            Orientation::UpRight => Some((1.0, 0.0).normalize()),
-                        };
-                    }
-                }
-            } else {
-                // Movement
-                let current_speed = player.velocity.magnitude();
-
-                let natural_orientation = match key_code {
-                    KeyCode::Up => {
-                        if player.velocity.1 > 0.0 {
-                            player.velocity.1 -= DECELERATION;
-                        } else {
-                            player.velocity.1 -= ACCELERATION;
+        let collision = are_colliding(&self.puck, &own.player)
+            .or_else(|| swept_rotation_catch(&self.puck, &own.player));
+        match collision {
+            // Catcher: grab a free puck OR steal from the opponent (with cooldown).
+            Some((ColliderType::Puck, ColliderType::Catcher)) if !just_shot => {
+                match self.puck.possession {
+                    Some(_owner) if _owner == side.opposite() => {
+                        if own.player.after_got_stolen_counter == 0.0 {
+                            self.puck.possession = Some(side);
+                            opp.player.after_got_stolen_counter =
+                                AFTER_GOT_STOLEN_COUNTER_MILLISECONDS;
+                            self.puck.attach_to_player(&own.player);
                         }
-                        Orientation::UpLeft
                     }
-                    KeyCode::Down => {
-                        if player.velocity.1 < 0.0 {
-                            player.velocity.1 += DECELERATION;
-                        } else {
-                            player.velocity.1 += ACCELERATION;
-                        }
-                        Orientation::DownRight
+                    None => {
+                        self.puck.possession = Some(side);
+                        self.puck.attach_to_player(&own.player);
                     }
-                    KeyCode::Left => {
-                        if player.velocity.0 > 0.0 {
-                            player.velocity.0 -= DECELERATION;
-                        } else {
-                            player.velocity.0 -= ACCELERATION;
-                        }
-                        Orientation::DownLeft
-                    }
-                    KeyCode::Right => {
-                        if player.velocity.0 < 0.0 {
-                            player.velocity.0 += DECELERATION;
-                        } else {
-                            player.velocity.0 += ACCELERATION;
-                        }
-                        Orientation::UpRight
-                    }
-                    _ => player.orientation,
-                };
-
-                // If player current orientation is not the natural orientation,
-                // try to align one step at the time
-                if current_speed > 0.0 && player.orientation != natural_orientation {
-                    let diff = (natural_orientation as isize - player.orientation as isize + 8) % 8;
-                    if diff > 4 {
-                        player.new_orientation = Some(player.orientation.previous());
-                    } else {
-                        player.new_orientation = Some(player.orientation.next());
-                    }
+                    _ => {}
                 }
             }
+            // Stick: grab a free puck (no stealing).
+            Some((ColliderType::Puck, ColliderType::Stick))
+                if !just_shot && self.puck.possession.is_none() =>
+            {
+                self.puck.possession = Some(side);
+                self.puck.attach_to_player(&own.player);
+            }
+            // Body: bounce when the puck is free; otherwise the owner's attach loop handles it.
+            Some((ColliderType::Puck, ColliderType::Player)) if self.puck.possession.is_none() => {
+                inelastic_collision(&mut self.puck, &mut own.player, PUCK_RESTITUTION);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_key_events(&mut self, side: GameSide, key_code: KeyCode) {
+        let data = match side {
+            GameSide::Red => &mut self.red_data,
+            GameSide::Blue => &mut self.blue_data,
+        };
+        data.handle_key_events(&mut self.puck, key_code);
+    }
+
+    fn compute_winner(&self) -> Option<GameSide> {
+        match self.red_data.score.cmp(&self.blue_data.score) {
+            std::cmp::Ordering::Greater => Some(GameSide::Red),
+            std::cmp::Ordering::Less => Some(GameSide::Blue),
+            std::cmp::Ordering::Equal => None,
+        }
+    }
+
+    pub fn end_with_winner(&mut self, winner: Option<GameSide>, by_disconnect: bool) {
+        self.state = GameState::Ending {
+            time: Instant::now(),
+            winner,
+            by_disconnect,
+        };
+    }
+
+    pub fn winner(&self) -> Option<GameSide> {
+        match self.state {
+            GameState::Ending { winner, .. } => winner,
+            _ => None,
         }
     }
 
     pub fn update(&mut self) -> AppResult<()> {
         let now = Instant::now();
         let deltatime = now.duration_since(self.last_tick).as_millis() as f32;
-        if deltatime < MINIMUM_DELTATIME_MILLISECONDS {
-            return Ok(());
-        }
 
         match self.state {
             GameState::Starting { time } => {
-                if now.duration_since(time).as_millis() >= STARTING_DELAY_MILLISECONDS {
+                if time.elapsed() >= Duration::from_millis(Self::STARTING_DELAY_MILLISECONDS) {
                     self.state = GameState::Running;
                 }
             }
             GameState::Running => {
                 self.update_running(deltatime)?;
                 self.timer += deltatime as u128;
-                if self.timer > GAME_DURATION_MILLISECONDS {
-                    self.state = GameState::Ending {
-                        time: Instant::now(),
-                    };
+                if self.timer > Self::DURATION_MILLISECONDS {
+                    self.end_with_winner(self.compute_winner(), false);
                 }
             }
-            GameState::AfterGoal { time, scored: _ } => {
-                if now.duration_since(time).as_millis() >= AFTER_GOAL_DELAY_MILLISECONDS {
-                    self.reset();
+            GameState::AfterGoal { time, .. } => {
+                if now.duration_since(time).as_millis() >= Self::AFTER_GOAL_DELAY_MILLISECONDS {
+                    self.reset_after_goal();
                 }
             }
-            GameState::Ending { time } => {
-                if now.duration_since(time).as_millis() >= ENDING_DELAY_MILLISECONDS {
-                    self.close();
-                }
-            }
+            GameState::Ending { .. } => {}
         }
-        self.fps = 1000.0 / deltatime;
         self.last_tick = now;
 
         Ok(())
     }
 
-    fn update_running(&mut self, deltatime: f32) -> AppResult<()> {
-        let red_previous_position = self.red_player.position;
-        let red_previous_orientation = self.red_player.orientation;
-        let blue_previous_position = self.blue_player.position;
-        let blue_previous_orientation = self.blue_player.orientation;
+    pub fn image(&self) -> AppResult<RgbaImage> {
+        let mut img = PITCH_IMAGES
+            .get(&self.palette)
+            .expect("Pitch image should exist")
+            .clone();
+        self.composite_dynamic(&mut img)?;
+        Ok(img)
+    }
 
-        let normalized_deltatime = deltatime / MINIMUM_DELTATIME_MILLISECONDS;
-
-        self.red_player.update(normalized_deltatime);
-        let red_goalie_head_position_y =
-            self.red_player.position.1 + self.red_player.head_position_offset().1 as f32 - 2.0; // -2 is the goalie head offset.
-        self.red_goalie
-            .set_position((MIN_X, red_goalie_head_position_y));
-        self.red_goalie.set_velocity(self.red_player.velocity);
-
-        self.blue_player.update(normalized_deltatime);
-        let blue_goalie_head_position_y =
-            self.blue_player.position.1 + self.blue_player.head_position_offset().1 as f32 - 2.0; // -2 is the goalie head offset.
-        self.blue_goalie
-            .set_position((MAX_X - GOALIE_WIDTH, blue_goalie_head_position_y));
-        self.blue_goalie.set_velocity(self.blue_player.velocity);
-        self.puck.update(normalized_deltatime);
-
-        // Check collisions between players
-        if resolve_collision(
-            &mut self.red_player,
-            &mut self.blue_player,
-            CollisionType::Minimal,
-            CollisionType::Minimal,
-        ) {
-            self.red_player.rotate(red_previous_orientation);
-            self.red_player.set_position(red_previous_position);
-            self.blue_player.rotate(blue_previous_orientation);
-            self.blue_player.set_position(blue_previous_position);
-        }
-
-        // Check collision between red and goalies.
-        if resolve_collision(
-            &mut self.red_player,
-            &mut self.red_goalie,
-            CollisionType::Minimal,
-            CollisionType::Full,
-        ) || resolve_collision(
-            &mut self.red_player,
-            &mut self.red_goalie,
-            CollisionType::Full,
-            CollisionType::Minimal,
-        ) || resolve_collision(
-            &mut self.red_player,
-            &mut self.blue_goalie,
-            CollisionType::Minimal,
-            CollisionType::Full,
-        ) || resolve_collision(
-            &mut self.red_player,
-            &mut self.blue_goalie,
-            CollisionType::Full,
-            CollisionType::Minimal,
-        ) {
-            self.red_player.rotate(red_previous_orientation);
-            self.red_player.set_position(red_previous_position);
-            self.red_player.set_velocity((0.0, 0.0));
-        }
-
-        // Check collision between blue and goalies
-        if resolve_collision(
-            &mut self.blue_player,
-            &mut self.blue_goalie,
-            CollisionType::Minimal,
-            CollisionType::Full,
-        ) || resolve_collision(
-            &mut self.blue_player,
-            &mut self.blue_goalie,
-            CollisionType::Full,
-            CollisionType::Minimal,
-        ) || resolve_collision(
-            &mut self.blue_player,
-            &mut self.red_goalie,
-            CollisionType::Minimal,
-            CollisionType::Full,
-        ) || resolve_collision(
-            &mut self.blue_player,
-            &mut self.red_goalie,
-            CollisionType::Full,
-            CollisionType::Minimal,
-        ) {
-            self.blue_player.rotate(blue_previous_orientation);
-            self.blue_player.set_position(blue_previous_position);
-            self.blue_player.set_velocity((0.0, 0.0));
-        }
-
-        if self.red_player.position != red_previous_position {
-            let head_position = (
-                self.red_player.position.0 + self.red_player.head_position_offset().0 as f32,
-                self.red_player.position.1 + self.red_player.head_position_offset().1 as f32,
+    /// Blit skate traces and sprite pixels onto `img` (caller supplies the pitch
+    /// already loaded in). Shared between `image()` and `render_lines()`.
+    fn composite_dynamic(&self, img: &mut RgbaImage) -> AppResult<()> {
+        for trace in &self.skate_traces {
+            img.put_pixel(
+                trace.x as u32,
+                trace.y as u32,
+                self.palette.skate_trace_color(),
             );
-            self.skate_traces.push(head_position);
         }
-        if self.blue_player.position != blue_previous_position {
-            let head_position = (
-                self.blue_player.position.0 + self.blue_player.head_position_offset().0 as f32,
-                self.blue_player.position.1 + self.blue_player.head_position_offset().1 as f32,
-            );
-            self.skate_traces.push(head_position);
+        let palette = self.palette;
+        for (sprite, pos) in self.visible_sprites().into_iter().flatten() {
+            img.copy_non_trasparent_from(sprite.image(palette), pos.x as u32, pos.y as u32)?;
         }
+        Ok(())
+    }
 
-        while self.skate_traces.len() > SKATE_TRACE_LENGTH {
-            self.skate_traces.remove(0);
-        }
-
-        let puck_previous_position = self.puck.position;
-        // Check collision between puck and goalies
-        // FIXME: sometimes puck is tucked inside goalie
-        if resolve_collision(
-            &mut self.puck,
-            &mut self.red_goalie,
-            CollisionType::Minimal,
-            CollisionType::Minimal,
-        ) {
-            self.puck.set_position(puck_previous_position);
-            self.red_goalie.saves += 1;
-        } else if resolve_collision(
-            &mut self.puck,
-            &mut self.blue_goalie,
-            CollisionType::Minimal,
-            CollisionType::Minimal,
-        ) {
-            self.puck.set_position(puck_previous_position);
-            self.blue_goalie.saves += 1;
-        }
-
-        // Check collision between puck and players
-        if resolve_collision(
-            &mut self.puck,
-            &mut self.red_player,
-            CollisionType::Minimal,
-            CollisionType::Minimal,
-        ) || resolve_collision(
-            &mut self.puck,
-            &mut self.blue_player,
-            CollisionType::Minimal,
-            CollisionType::Minimal,
-        ) {
-            self.puck.set_position(puck_previous_position);
-        }
-
-        // Check for goals!
-        match self.puck.has_scored() {
-            Some(GameSide::Red) => {
-                self.red_score += 1;
-                self.state = GameState::AfterGoal {
-                    time: Instant::now(),
-                    scored: GameSide::Red,
-                };
-                return Ok(());
-            }
-            Some(GameSide::Blue) => {
-                self.blue_score += 1;
-                self.state = GameState::AfterGoal {
-                    time: Instant::now(),
-                    scored: GameSide::Blue,
-                };
-                return Ok(());
-            }
-            None => {}
-        }
-
-        // Logic related to puck possession
-        match self.puck.possession {
-            Some(GameSide::Red) => {
-                if self.puck.can_be_stolen_by_player(&self.blue_player) {
-                    self.puck.possession = Some(GameSide::Blue);
-                    self.red_player.after_got_stolen_counter =
-                        AFTER_GOT_STOLEN_COUNTER_MILLISECONDS;
-                }
-            }
-            Some(GameSide::Blue) => {
-                if self.puck.can_be_stolen_by_player(&self.red_player) {
-                    self.puck.possession = Some(GameSide::Red);
-                    self.blue_player.after_got_stolen_counter =
-                        AFTER_GOT_STOLEN_COUNTER_MILLISECONDS;
-                }
-            }
-            None => {
-                match (
-                    self.puck.can_be_catched_by_player(&self.red_player),
-                    self.puck.can_be_catched_by_player(&self.blue_player),
-                ) {
-                    (true, true) => {
-                        // Puck goes to the fastest moving player
-                        if self.red_player.velocity.magnitude()
-                            > self.blue_player.velocity.magnitude()
-                        {
-                            self.puck.possession = Some(GameSide::Red);
-                        } else if self.blue_player.velocity.magnitude()
-                            > self.red_player.velocity.magnitude()
-                        {
-                            self.puck.possession = Some(GameSide::Blue);
-                        } else {
-                            // do nothing
-                        }
-                    }
-                    (true, false) => {
-                        self.puck.possession = Some(GameSide::Red);
-                    }
-                    (false, true) => {
-                        self.puck.possession = Some(GameSide::Blue);
-                    }
-                    (false, false) => {
-                        self.puck.possession = None;
-                    }
-                }
-            }
-        }
-
-        // Puck positioning logic.
-        // If the puck is in possession, it follows the player unless the player is shooting.
-        if let Some(side) = self.puck.possession {
-            let (player, other) = if side == GameSide::Red {
-                (&mut self.red_player, &mut self.blue_player)
+    /// Fixed-size stack array of (sprite, position) for everything that should
+    /// be drawn this tick. The Blue player slot is `None` in practice mode.
+    fn visible_sprites(&self) -> [Option<(&dyn Sprite, U16Vec2)>; 5] {
+        [
+            Some((
+                &self.red_data.player as &dyn Sprite,
+                self.red_data.player.position(),
+            )),
+            Some((
+                &self.red_data.goalie as &dyn Sprite,
+                self.red_data.goalie.position(),
+            )),
+            if self.practice_mode {
+                None
             } else {
-                (&mut self.blue_player, &mut self.red_player)
-            };
-
-            if player.shooting_counter > 0.0 {
-                player.shooting_counter -= deltatime;
-                // If the player is shooting counter went to 0, the puck follows the shooting direction.
-                if player.shooting_counter <= 0.0 {
-                    player.shooting_counter = 0.0;
-                    player.after_shooting_counter = AFTER_SHOOTING_COUNTER_MILLISECONDS;
-                    player.new_orientation = Some(((player.orientation as u8 + 1) % 8).into());
-                    self.puck.possession = None;
-
-                    // FIXME: put shooting direction and counter together in a single variable
-                    self.puck.velocity = player
-                        .shooting_direction
-                        .unwrap_or(player.velocity)
-                        .mul(SHOOTING_POWER);
-
-                    player.shooting_direction = None;
-                }
-            } else {
-                self.puck.attach_to_player(&player);
-            }
-
-            if other.shooting_counter > 0.0 {
-                other.shooting_counter = 0.0;
-                other.shooting_direction = None;
-            }
-        }
-
-        Ok(())
+                Some((
+                    &self.blue_data.player as &dyn Sprite,
+                    self.blue_data.player.position(),
+                ))
+            },
+            Some((
+                &self.blue_data.goalie as &dyn Sprite,
+                self.blue_data.goalie.position(),
+            )),
+            Some((&self.puck as &dyn Sprite, self.puck.position())),
+        ]
     }
 
-    pub fn draw(&mut self) -> AppResult<()> {
-        let timer = if self.timer > GAME_DURATION_MILLISECONDS {
-            0
-        } else {
-            (GAME_DURATION_MILLISECONDS - self.timer) / 1000
-        };
+    /// Build the per-frame `Vec<Line>` shown in the TUI. Starts from the
+    /// statically pre-rendered pitch lines and only re-rasterises the cells
+    /// actually touched by sprites and skate traces.
+    pub fn render_lines(&self) -> AppResult<Vec<ratatui::text::Line<'static>>> {
+        let mut lines = PITCH_LINES
+            .get(&self.palette)
+            .expect("Pitch lines should exist")
+            .clone();
 
-        if self.red_client.is_connected {
-            if self
-                .red_client
-                .terminal
-                .draw(|f| {
-                    Self::render(
-                        f,
-                        self.red_client.palette,
-                        &self.red_player,
-                        &self.red_goalie,
-                        &self.blue_player,
-                        &self.blue_goalie,
-                        &self.puck,
-                        &self.skate_traces,
-                        self.red_score,
-                        self.blue_score,
-                        self.red_goalie.saves,
-                        self.blue_goalie.saves,
-                        timer,
-                        self.fps,
-                        self.state,
-                        GameSide::Red,
-                    )
-                    .unwrap_or_else(|e| {
-                        log::error!("Failed to draw game: {}", e);
-                    })
-                })
-                .is_err()
-            {
-                self.red_client.is_connected = false;
-            }
-        }
-        if self.blue_client.is_connected {
-            if self
-                .blue_client
-                .terminal
-                .draw(|f| {
-                    Self::render(
-                        f,
-                        self.blue_client.palette,
-                        &self.red_player,
-                        &self.red_goalie,
-                        &self.blue_player,
-                        &self.blue_goalie,
-                        &self.puck,
-                        &self.skate_traces,
-                        self.red_score,
-                        self.blue_score,
-                        self.red_goalie.saves,
-                        self.blue_goalie.saves,
-                        timer,
-                        self.fps,
-                        self.state,
-                        GameSide::Blue,
-                    )
-                    .unwrap_or_else(|e| {
-                        log::error!("Failed to draw game: {}", e);
-                    })
-                })
-                .is_err()
-            {
-                self.blue_client.is_connected = false;
-            }
+        let mut composed = PITCH_IMAGES
+            .get(&self.palette)
+            .expect("Pitch image should exist")
+            .clone();
+        self.composite_dynamic(&mut composed)?;
+
+        for (sprite, pos) in self.visible_sprites().into_iter().flatten() {
+            let size = sprite.size();
+            let cy_start = pos.y / 2;
+            let cy_end = (pos.y + size.y).div_ceil(2);
+            let cx_start = pos.x;
+            let cx_end = pos.x + size.x;
+            rerender_cells(&mut lines, &composed, cx_start..cx_end, cy_start..cy_end);
         }
 
-        Ok(())
-    }
-
-    fn render(
-        frame: &mut Frame,
-        palette: Palette,
-        red_player: &impl Body,
-        red_goalie: &impl Body,
-        blue_player: &impl Body,
-        blue_goalie: &impl Body,
-        puck: &impl Body,
-        skate_traces: &[(f32, f32)],
-        red_score: u8,
-        blue_score: u8,
-        red_saves: usize,
-        blue_saves: usize,
-        timer: u128,
-        fps: f32,
-        state: GameState,
-        rules_side: GameSide,
-    ) -> AppResult<()> {
-        let split =
-            Layout::vertical([Constraint::Length(7), Constraint::Min(1)]).split(frame.size());
-
-        let mut img = base_image(palette);
-
-        for (x, y) in skate_traces {
-            img.put_pixel(*x as u32, *y as u32, skate_trace_color(palette));
+        for trace in &self.skate_traces {
+            let cy = trace.y / 2;
+            rerender_cells(&mut lines, &composed, trace.x..(trace.x + 1), cy..(cy + 1));
         }
 
-        img.copy_non_trasparent_from(
-            &red_player.image(palette),
-            red_player.position().0 as u32,
-            red_player.position().1 as u32,
-        )?;
-
-        img.copy_non_trasparent_from(
-            &red_goalie.image(palette),
-            red_goalie.position().0 as u32,
-            red_goalie.position().1 as u32,
-        )?;
-
-        img.copy_non_trasparent_from(
-            &blue_player.image(palette),
-            blue_player.position().0 as u32,
-            blue_player.position().1 as u32,
-        )?;
-        img.copy_non_trasparent_from(
-            &blue_goalie.image(palette),
-            blue_goalie.position().0 as u32,
-            blue_goalie.position().1 as u32,
-        )?;
-
-        img.copy_non_trasparent_from(
-            &puck.image(palette),
-            puck.position().0 as u32,
-            puck.position().1 as u32,
-        )?;
-
-        let paragraph = Paragraph::new(img_to_lines(&img));
-        frame.render_widget(paragraph, split[1]);
-
-        let info_rect = Rect::new(frame.size().width - 20, frame.size().height - 1, 10, 1);
-        frame.render_widget(Paragraph::new(format!("FPS:{}", fps as u32)), info_rect);
-
-        let top_split = Layout::horizontal([
-            Constraint::Length(20),
-            Constraint::Length(43),
-            Constraint::Length(34),
-            Constraint::Length(43),
-            Constraint::Length(20),
-        ])
-        .split(Rect {
-            x: 0,
-            y: 1,
-            width: frame.size().width,
-            height: 6,
-        });
-
-        let red_score_paragraph = red_score.big_font_styled(Color::Red, Color::Yellow);
-
-        let horizontal = if red_score < 10 { 5 } else { 1 };
-        let area = top_split[0].inner(&Margin {
-            horizontal,
-            vertical: 0,
-        });
-        frame.render_widget(red_score_paragraph, area);
-
-        match rules_side {
-            GameSide::Red => {
-                frame.render_widget(
-                    Paragraph::new(vec![
-                        Line::from(format!("Saves {}", red_saves)),
-                        Line::from("← ↑ → ↓: move"),
-                        Line::from("space: shoot"),
-                        Line::from("p: change palette"),
-                        Line::from("Esc: close game"),
-                    ])
-                    .centered(),
-                    top_split[1],
-                );
-                frame.render_widget(
-                    Paragraph::new(format!("Saves {}", blue_saves)).centered(),
-                    top_split[3],
-                );
-            }
-            GameSide::Blue => {
-                frame.render_widget(
-                    Paragraph::new(format!("Saves {}", red_saves)).centered(),
-                    top_split[1],
-                );
-                frame.render_widget(
-                    Paragraph::new(vec![
-                        Line::from(format!("Saves {}", blue_saves)),
-                        Line::from("← ↑ → ↓: move"),
-                        Line::from("space: shoot"),
-                        Line::from("p: change palette"),
-                        Line::from("Esc: close game"),
-                    ])
-                    .centered(),
-                    top_split[3],
-                );
-            }
-        }
-
-        let blue_score_paragraph = blue_score.big_font_styled(Color::Blue, Color::LightMagenta);
-        let horizontal = if blue_score < 10 { 5 } else { 1 };
-        let area = top_split[4].inner(&Margin {
-            horizontal,
-            vertical: 0,
-        });
-        frame.render_widget(blue_score_paragraph, area);
-
-        let timer_split = Layout::horizontal([
-            Constraint::Length(10),
-            Constraint::Length(4),
-            Constraint::Length(10),
-            Constraint::Length(10),
-        ])
-        .split(top_split[2]);
-
-        let (color_1, color_2) = match palette {
-            Palette::Dark => (Color::Cyan, Color::White),
-            Palette::Light => (Color::DarkGray, Color::Gray),
-            Palette::Basket => (Color::Magenta, Color::LightMagenta),
-            Palette::Alt => (Color::Green, Color::Red),
-        };
-
-        let minutes_paragraph = ((timer / 60) as u8).big_font_styled(color_1, color_2);
-        let seconds_tens_paragraph = (((timer % 60) / 10) as u8).big_font_styled(color_1, color_2);
-        let seconds_units_paragraph = (((timer % 60) % 10) as u8).big_font_styled(color_1, color_2);
-
-        frame.render_widget(minutes_paragraph, timer_split[0]);
-        frame.render_widget(dots(color_1, color_2), timer_split[1]);
-        frame.render_widget(seconds_tens_paragraph, timer_split[2]);
-        frame.render_widget(seconds_units_paragraph, timer_split[3]);
-
-        match state {
-            GameState::Starting { time } => {
-                let rect = Rect::new(
-                    (MIN_X + MAX_X) as u16 / 2 - 5,
-                    (MIN_Y + MAX_Y) as u16 / 4 + 5,
-                    10,
-                    10,
-                );
-                let elapsed = time.elapsed().as_millis();
-                let countdown_paragraph = if STARTING_DELAY_MILLISECONDS > elapsed {
-                    (((STARTING_DELAY_MILLISECONDS - elapsed) / 1000) as u8 + 1)
-                        .big_font_styled(color_1, color_2)
-                } else {
-                    Paragraph::new("")
-                };
-
-                frame.render_widget(countdown_paragraph, rect);
-            }
-            GameState::AfterGoal { time: _, scored } => {
-                let rect = Rect::new(
-                    (MIN_X + MAX_X) as u16 / 2 - 44,
-                    (MIN_Y + MAX_Y) as u16 / 4 + 5,
-                    88,
-                    10,
-                );
-                let scored = if scored == GameSide::Red {
-                    red_scored(color_1, color_2)
-                } else {
-                    blue_scored(color_1, color_2)
-                };
-                frame.render_widget(scored, rect);
-            }
-            GameState::Ending { .. } => {
-                let rect = Rect::new(
-                    (MIN_X + MAX_X) as u16 / 2 - 36,
-                    (MIN_Y + MAX_Y) as u16 / 4 + 5,
-                    72,
-                    10,
-                );
-                let congrats = if red_score > blue_score {
-                    red_won(color_1, color_2)
-                } else if blue_score > red_score {
-                    blue_won(color_1, color_2)
-                } else {
-                    draw(color_1, color_2)
-                };
-                frame.render_widget(congrats, rect);
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    pub fn connections_state(&self) -> (bool, bool) {
-        (self.red_client.is_connected, self.blue_client.is_connected)
+        Ok(lines)
     }
 }
 
-#[cfg(test)]
+/// Detect a catch that happened while the player was rotating this tick by
+/// re-running the granular pixel check against the previous orientation's
+/// stick/catcher hit_box. Approximates the swept arc with two snapshots, which
+/// closes the worst gap (stick passes over puck mid-rotation) without
+/// computing the full arc.
+fn swept_rotation_catch(puck: &Puck, player: &Player) -> Option<(ColliderType, ColliderType)> {
+    if !player.just_rotated() {
+        return None;
+    }
+    let prev_hit_box = player.previous_hit_box();
+    let player_pos = player.position();
+    let puck_pos = puck.position();
+    for (&puck_point, &_puck_collider) in puck.hit_box().iter() {
+        let world = puck_pos + puck_point;
+        if world.x < player_pos.x || world.y < player_pos.y {
+            continue;
+        }
+        let local = world - player_pos;
+        if let Some(&player_collider) = prev_hit_box.get(&local) {
+            if matches!(player_collider, ColliderType::Stick | ColliderType::Catcher) {
+                return Some((ColliderType::Puck, player_collider));
+            }
+        }
+    }
+    None
+}
 
+#[cfg(test)]
 mod test {
     use super::*;
+    use crate::engine::goalie;
+    use crate::traits::ColliderType;
     use core::time;
+    use glam::{I16Vec2, U16Vec2};
+    use image::Rgba;
+    use log::LevelFilter;
+    use log4rs::append::file::FileAppender;
+    use log4rs::config::{Appender, Root};
+    use log4rs::encode::pattern::PatternEncoder;
+    use log4rs::Config;
     use ratatui::backend::CrosstermBackend;
+    use ratatui::layout::{Constraint, Layout};
+    use ratatui::widgets::Paragraph;
     use ratatui::Terminal;
 
+    fn init() -> AppResult<()> {
+        let logfile_path = store_path("sshattrick.log")?;
+        let logfile = FileAppender::builder()
+            .append(false)
+            .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+            .build(logfile_path)?;
+
+        let config = Config::builder()
+            .appender(Appender::builder().build("logfile", Box::new(logfile)))
+            .build(Root::builder().appender("logfile").build(LevelFilter::Info))?;
+
+        log4rs::init_config(config)?;
+
+        Ok(())
+    }
+
     #[test]
-    fn test_puck_position() {
+    fn test_puck_position_with_rotation() -> AppResult<()> {
         let mut player = Player::new(GameSide::Red);
-        player.set_position((50.0, 40.0));
+        player.set_position(U16Vec2::new(50, 40));
         let mut puck = Puck::new();
 
-        let offset = puck_catcher_offset(player.orientation);
-        puck.set_position((player.position.0 + offset.0, player.position.1 + offset.1));
+        puck.set_position(player.catcher_position());
 
-        // create crossterm terminal to stdout
         let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend)?;
 
-        terminal.clear().unwrap();
+        terminal.clear()?;
 
         let palette = Palette::Dark;
 
         for _ in 0..16 {
-            let offset = puck_catcher_offset(player.orientation);
-            puck.set_position((player.position.0 + offset.0, player.position.1 + offset.1));
-            terminal
-                .draw(|frame| {
-                    let mut img = base_image(palette);
+            puck.set_position(player.catcher_position());
+            terminal.draw(|frame| {
+                let mut img = PITCH_IMAGES
+                    .get(&palette)
+                    .expect("Pitch image should exist")
+                    .clone();
 
-                    img.copy_non_trasparent_from(
-                        &player.image(palette),
-                        player.position().0 as u32,
-                        player.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    img.copy_non_trasparent_from(
-                        &puck.image(palette),
-                        puck.position().0 as u32,
-                        puck.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
-                        .split(frame.size());
-
-                    let info = Paragraph::new(format!("Orientation {}", player.orientation as u8));
-                    frame.render_widget(info, split[0]);
-
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, split[1]);
-                })
+                img.copy_non_trasparent_from(
+                    &player.image(palette),
+                    player.position().x as u32,
+                    player.position().y as u32,
+                )
                 .unwrap();
+
+                img.copy_non_trasparent_from(
+                    &puck.image(palette),
+                    puck.position().x as u32,
+                    puck.position().y as u32,
+                )
+                .unwrap();
+
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
+
+                let info = Paragraph::new(format!("Orientation {}", player.orientation as u8));
+                frame.render_widget(info, split[0]);
+
+                let paragraph = Paragraph::new(img_to_lines(&img));
+                frame.render_widget(paragraph, split[1]);
+            })?;
             player.rotate(player.orientation.next());
             std::thread::sleep(time::Duration::from_millis(500));
         }
+
+        terminal.clear()?;
+
+        Ok(())
     }
 
     #[test]
-    fn test_player_collision_boxes() {
-        let mut full_box_player = Player::new(GameSide::Red);
-        full_box_player.set_position((50.0, 40.0));
+    fn test_goalie_boundaries() -> AppResult<()> {
+        let mut red_goalie = goalie::Goalie::new(GameSide::Red);
+        let mut blue_goalie = goalie::Goalie::new(GameSide::Blue);
 
-        let mut minimal_box_player = Player::new(GameSide::Blue);
-        minimal_box_player.set_position((100.0, 40.0));
-
-        // create crossterm terminal to stdout
         let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
-        terminal.clear().unwrap();
         let palette = Palette::Dark;
+        std::thread::sleep(time::Duration::from_millis(500));
 
-        for _ in 0..16 {
-            terminal
-                .draw(|frame| {
-                    let mut img = base_image(palette);
+        for idx in 0..32 {
+            terminal.draw(|frame| {
+                let mut img = PITCH_IMAGES
+                    .get(&palette)
+                    .expect("Pitch image should exist")
+                    .clone();
 
-                    img.copy_non_trasparent_from(
-                        &full_box_player.image(palette),
-                        full_box_player.position().0 as u32,
-                        full_box_player.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    img.copy_non_trasparent_from(
-                        &minimal_box_player.image(palette),
-                        minimal_box_player.position().0 as u32,
-                        minimal_box_player.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    // Color in white the border of the collision boxes
-                    let full_box = full_box_player.full_collision_rect();
-
-                    for x in full_box.x..full_box.x + full_box.width {
-                        img.put_pixel(
-                            x as u32,
-                            full_box.y as u32 - 1,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                        img.put_pixel(
-                            x as u32,
-                            full_box.y as u32 + full_box.height as u32,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                    }
-
-                    for y in full_box.y..full_box.y + full_box.height {
-                        img.put_pixel(
-                            full_box.x as u32 - 1,
-                            y as u32,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                        img.put_pixel(
-                            full_box.x as u32 + full_box.width as u32,
-                            y as u32,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                    }
-                    let minimal_box = minimal_box_player.minimal_collision_rect();
-
-                    for x in minimal_box.x..minimal_box.x + minimal_box.width {
-                        img.put_pixel(
-                            x as u32,
-                            minimal_box.y as u32 - 1,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                        img.put_pixel(
-                            x as u32,
-                            minimal_box.y as u32 + minimal_box.height as u32,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                    }
-
-                    for y in minimal_box.y..minimal_box.y + minimal_box.height {
-                        img.put_pixel(
-                            minimal_box.x as u32 - 1,
-                            y as u32,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                        img.put_pixel(
-                            minimal_box.x as u32 + minimal_box.width as u32,
-                            y as u32,
-                            image::Rgba([255, 255, 255, 255]),
-                        );
-                    }
-
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, frame.size());
-                })
+                img.copy_non_trasparent_from(
+                    &red_goalie.image(palette),
+                    red_goalie.position().x as u32,
+                    red_goalie.position().y as u32,
+                )
                 .unwrap();
-            full_box_player.rotate(full_box_player.orientation.next());
-            minimal_box_player.rotate(minimal_box_player.orientation.previous());
 
-            std::thread::sleep(time::Duration::from_millis(500));
+                img.copy_non_trasparent_from(
+                    &blue_goalie.image(palette),
+                    blue_goalie.position().x as u32,
+                    blue_goalie.position().y as u32,
+                )
+                .unwrap();
+
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
+
+                let info = Paragraph::new(format!(
+                    "Red position {} - Blue position {} - Size {} ",
+                    red_goalie.position(),
+                    blue_goalie.position(),
+                    red_goalie.size(),
+                ));
+                frame.render_widget(info, split[0]);
+
+                let paragraph = Paragraph::new(img_to_lines(&img));
+                frame.render_widget(paragraph, split[1]);
+            })?;
+
+            let new_position = (red_goalie.position().as_i16vec2()
+                + I16Vec2::new(0, if idx > 10 { 1 } else { -1 }))
+            .as_u16vec2();
+            red_goalie.set_position(new_position);
+
+            let new_position = (blue_goalie.position().as_i16vec2()
+                + I16Vec2::new(0, if idx > 10 { 1 } else { -1 }))
+            .as_u16vec2();
+            blue_goalie.set_position(new_position);
+            std::thread::sleep(time::Duration::from_millis(250));
         }
+
+        terminal.clear()?;
+        Ok(())
     }
 
     #[test]
-    fn test_player_rotation_center() {
+    fn test_goalie_position_with_rotation() -> AppResult<()> {
         let mut player = Player::new(GameSide::Red);
-        player.set_position((50.0, 40.0));
+        player.set_position(U16Vec2::new(15, 40));
+        let mut puck = Puck::new();
+        puck.set_position(player.catcher_position());
 
-        // create crossterm terminal to stdout
+        let mut goalie = goalie::Goalie::new(GameSide::Red);
+        goalie.align_to_player(&player);
+
         let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
-        terminal.clear().unwrap();
         let palette = Palette::Dark;
 
-        for _ in 0..16 {
-            terminal
-                .draw(|frame| {
-                    let mut img = base_image(palette);
+        for idx in 0..16 {
+            puck.set_position(player.catcher_position());
+            goalie.align_to_player(&player);
 
-                    img.copy_non_trasparent_from(
-                        &player.image(palette),
-                        player.position().0 as u32,
-                        player.position().1 as u32,
-                    )
-                    .unwrap();
+            terminal.draw(|frame| {
+                let mut img = PITCH_IMAGES
+                    .get(&palette)
+                    .expect("Pitch image should exist")
+                    .clone();
 
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, frame.size());
-                })
+                img.copy_non_trasparent_from(
+                    &player.image(palette),
+                    player.position().x as u32,
+                    player.position().y as u32,
+                )
                 .unwrap();
-            let new_orientation = player.orientation.next();
-            player.rotate(new_orientation);
+
+                img.copy_non_trasparent_from(
+                    &puck.image(palette),
+                    puck.position().x as u32,
+                    puck.position().y as u32,
+                )
+                .unwrap();
+
+                img.copy_non_trasparent_from(
+                    &goalie.image(palette),
+                    goalie.position().x as u32,
+                    goalie.position().y as u32,
+                )
+                .unwrap();
+
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
+
+                let info = Paragraph::new(format!("Orientation {}", player.orientation as u8));
+                frame.render_widget(info, split[0]);
+
+                let paragraph = Paragraph::new(img_to_lines(&img));
+                frame.render_widget(paragraph, split[1]);
+            })?;
+
+            let new_position =
+                (player.position().as_i16vec2() + I16Vec2::new(0, idx % 3 - 1)).as_u16vec2();
+            player.set_position(new_position);
+            player.rotate(player.orientation.next());
             std::thread::sleep(time::Duration::from_millis(500));
         }
+
+        terminal.clear()?;
+        Ok(())
     }
 
     #[test]
-    fn test_goalie_collision_boxes() {
-        let mut red_goalie = Goalie::new(GameSide::Red);
-        let mut blue_goalie = Goalie::new(GameSide::Blue);
-
-        // create crossterm terminal to stdout
+    fn test_goalie_areas() -> AppResult<()> {
+        let red_area = Area::new(GameSide::Red);
+        let blue_area = Area::new(GameSide::Blue);
         let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
-        terminal.clear().unwrap();
         let palette = Palette::Dark;
+        terminal.draw(|frame| {
+            let mut img = PITCH_IMAGES
+                .get(&palette)
+                .expect("Pitch image should exist")
+                .clone();
 
-        for idx in 0..40 {
-            let dy = if idx < 20 { 1.0 } else { -1.0 };
-            red_goalie.set_position((red_goalie.position.0, red_goalie.position.1 + dy));
-            blue_goalie.set_position((blue_goalie.position.0, blue_goalie.position.1 + dy));
+            for area in [red_area, blue_area].iter() {
+                for (point, collider_type) in area.hit_box().iter() {
+                    let pixel = match collider_type {
+                        ColliderType::GoalieAreaHorizontalSide => Rgba::from([255, 255, 0, 55]),
+                        ColliderType::GoalieAreaVerticalSize => Rgba::from([0, 255, 255, 55]),
+                        _ => unreachable!(),
+                    };
+                    let g_point = area.position() + point;
+                    img.put_pixel(g_point.x as u32, g_point.y as u32, pixel);
+                }
+            }
 
-            terminal
-                .draw(|frame| {
-                    let mut img = base_image(palette);
+            let split =
+                Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(frame.area());
 
-                    img.copy_non_trasparent_from(
-                        &red_goalie.image(palette),
-                        red_goalie.position().0 as u32,
-                        red_goalie.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    img.copy_non_trasparent_from(
-                        &blue_goalie.image(palette),
-                        blue_goalie.position().0 as u32,
-                        blue_goalie.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    for goalie in [&red_goalie, &blue_goalie].iter() {
-                        let full_box = goalie.full_collision_rect();
-
-                        for x in full_box.x..full_box.x + full_box.width {
-                            img.put_pixel(
-                                x as u32,
-                                full_box.y as u32 - 1,
-                                image::Rgba([255, 255, 0, 255]),
-                            );
-                            img.put_pixel(
-                                x as u32,
-                                full_box.y as u32 + full_box.height as u32,
-                                image::Rgba([255, 255, 0, 255]),
-                            );
-                        }
-
-                        for y in full_box.y..full_box.y + full_box.height {
-                            img.put_pixel(
-                                full_box.x as u32 - 1,
-                                y as u32,
-                                image::Rgba([255, 255, 0, 255]),
-                            );
-                            img.put_pixel(
-                                full_box.x as u32 + full_box.width as u32,
-                                y as u32,
-                                image::Rgba([255, 255, 0, 255]),
-                            );
-                        }
-                        let minimal_box = goalie.minimal_collision_rect();
-
-                        for x in minimal_box.x..minimal_box.x + minimal_box.width {
-                            img.put_pixel(
-                                x as u32,
-                                minimal_box.y as u32 - 1,
-                                image::Rgba([0, 0, 255, 255]),
-                            );
-                            img.put_pixel(
-                                x as u32,
-                                minimal_box.y as u32 + minimal_box.height as u32,
-                                image::Rgba([0, 0, 255, 255]),
-                            );
-                        }
-
-                        for y in minimal_box.y..minimal_box.y + minimal_box.height {
-                            img.put_pixel(
-                                minimal_box.x as u32 - 1,
-                                y as u32,
-                                image::Rgba([0, 0, 255, 255]),
-                            );
-                            img.put_pixel(
-                                minimal_box.x as u32 + minimal_box.width as u32,
-                                y as u32,
-                                image::Rgba([0, 0, 255, 255]),
-                            );
-                        }
-                    }
-
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, frame.size());
-                })
-                .unwrap();
-
-            std::thread::sleep(time::Duration::from_millis(200));
-        }
+            let paragraph = Paragraph::new(img_to_lines(&img));
+            frame.render_widget(paragraph, split[1]);
+        })?;
+        std::thread::sleep(time::Duration::from_millis(5000));
+        terminal.clear()?;
+        Ok(())
     }
 
     #[test]
-    fn test_goal_areas() {
+    fn test_puck_boundaries() -> AppResult<()> {
+        let mut game = Game::new();
+        game.state = GameState::Running;
+
+        let backend = CrosstermBackend::new(std::io::stdout());
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
+
+        for _ in 0..100 {
+            if let Err(e) = game.update() {
+                log::error!("Update error: {e}");
+            }
+            terminal.draw(|frame| {
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
+                let image = game.image().expect("update error");
+                let paragraph = Paragraph::new(img_to_lines(&image));
+                frame.render_widget(paragraph, split[1]);
+            })?;
+            std::thread::sleep(time::Duration::from_millis(50));
+        }
+
+        game.puck.set_velocity(Vec2::new(0.075, 0.0));
+
+        for _ in 0..100 {
+            if let Err(e) = game.update() {
+                log::error!("Update error: {e}");
+            }
+            terminal.draw(|frame| {
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
+                let image = game.image().expect("update error");
+                let paragraph = Paragraph::new(img_to_lines(&image));
+                frame.render_widget(paragraph, split[1]);
+            })?;
+            std::thread::sleep(time::Duration::from_millis(50));
+        }
+
+        terminal.clear()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_goal_areas() -> AppResult<()> {
         let mut puck = Puck::new();
-        puck.set_position((MAX_X as f32 - 20.0, 30.0));
-        puck.set_velocity((0.02, 0.0));
-        // create crossterm terminal to stdout
+        puck.set_position(U16Vec2::new(MAX_X - 20, 30));
+        puck.set_velocity(Vec2::new(0.02, 0.0));
         let backend = CrosstermBackend::new(std::io::stdout());
         let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal.clear().unwrap();
+        terminal.clear()?;
         let palette = Palette::Dark;
 
         let mut last_tick = Instant::now();
-
         let mut score = 0;
         let mut y = 0.0;
         loop {
             let now = Instant::now();
             let deltatime = now.duration_since(last_tick).as_millis() as f32;
-
             puck.update(deltatime);
 
-            terminal
-                .draw(|frame| {
-                    let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
-                        .split(frame.size());
-                    let mut img = base_image(palette);
+            terminal.draw(|frame| {
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
 
-                    img.copy_non_trasparent_from(
-                        &puck.image(palette),
-                        puck.position().0 as u32,
-                        puck.position().1 as u32,
-                    )
-                    .unwrap();
+                let mut img = PITCH_IMAGES
+                    .get(&palette)
+                    .expect("Pitch image should exist")
+                    .clone();
 
-                    for y in GOALIE_AREA_MIN_Y as u32..=(GOALIE_AREA_MAX_Y - PUCK_HEIGHT) as u32 {
-                        img.put_pixel(
-                            (MAX_X - PUCK_WIDTH) as u32,
-                            y,
-                            image::Rgba([255, 255, 0, 255]),
-                        );
-                        img.put_pixel(MIN_X as u32, y, image::Rgba([255, 255, 0, 255]));
-                    }
-
-                    let info = format!("Score {}", score);
-                    let paragraph = Paragraph::new(info);
-                    frame.render_widget(paragraph, split[0]);
-
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, split[1]);
-                })
+                img.copy_non_trasparent_from(
+                    &puck.image(palette),
+                    puck.position().x as u32,
+                    puck.position().y as u32,
+                )
                 .unwrap();
+
+                let info = format!("Score {}", score);
+                let paragraph = Paragraph::new(info);
+                frame.render_widget(paragraph, split[0]);
+                let paragraph = Paragraph::new(img_to_lines(&img));
+                frame.render_widget(paragraph, split[1]);
+            })?;
 
             if puck.has_scored().is_some() {
                 score += 1;
                 y += 1.0;
-                puck.set_position((MAX_X as f32 - 20.0, 30.0 + y));
-                puck.set_velocity((0.025, 0.0));
-            } else if puck.velocity.0 < 0.0 {
+                puck.set_position(U16Vec2::new(MAX_X - 20, 30 + y as u16));
+                puck.set_velocity(Vec2::new(0.05, 0.0));
+            } else if puck.velocity.x < 0.0 {
                 y += 1.0;
-                puck.set_position((MAX_X as f32 - 20.0, 30.0 + y));
-                puck.set_velocity((0.025, 0.0));
+                puck.set_position(U16Vec2::new(MAX_X - 20, 30 + y as u16));
+                puck.set_velocity(Vec2::new(0.05, 0.0));
             }
 
             if y > 30.0 {
@@ -1993,135 +910,234 @@ mod test {
             std::thread::sleep(time::Duration::from_millis(20));
             last_tick = now;
         }
+
+        assert!(score == GOALIE_AREA_HEIGHT - 2 + 1);
+        Ok(())
     }
 
     #[test]
-    fn test_puck_possession() {
-        let mut red_player = Player::new(GameSide::Red);
-        red_player.set_position((50.0, 40.0));
-        let mut blue_player = Player::new(GameSide::Blue);
-        blue_player.set_position((100.0, 40.0));
+    fn test_player_hitbox_with_rotation() -> AppResult<()> {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
         let mut puck = Puck::new();
+        puck.set_position(player.catcher_position());
 
-        // create crossterm terminal to stdout
         let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
-        terminal.clear().unwrap();
         let palette = Palette::Dark;
-
-        puck.possession = Some(GameSide::Red);
-        puck.attach_to_player(&red_player);
 
         for _ in 0..16 {
-            terminal
-                .draw(|frame| {
-                    let mut img = base_image(palette);
+            puck.set_position(player.catcher_position());
+            terminal.draw(|frame| {
+                let mut img = PITCH_IMAGES
+                    .get(&palette)
+                    .expect("Pitch image should exist")
+                    .clone();
 
-                    img.copy_non_trasparent_from(
-                        &red_player.image(palette),
-                        red_player.position().0 as u32,
-                        red_player.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    img.copy_non_trasparent_from(
-                        &blue_player.image(palette),
-                        blue_player.position().0 as u32,
-                        blue_player.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    img.copy_non_trasparent_from(
-                        &puck.image(palette),
-                        puck.position().0 as u32,
-                        puck.position().1 as u32,
-                    )
-                    .unwrap();
-
-                    //Color in red all pixels within puck full collision rect
-                    let full_box = puck.full_collision_rect();
-                    for x in full_box.x..full_box.x + full_box.width {
-                        for y in full_box.y..full_box.y + full_box.height {
-                            img.put_pixel(x as u32, y as u32, image::Rgba([255, 0, 0, 255]));
-                        }
-                    }
-
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, frame.size());
-                })
+                img.copy_non_trasparent_from(
+                    &player.image(palette),
+                    player.position().x as u32,
+                    player.position().y as u32,
+                )
                 .unwrap();
-            red_player.rotate(red_player.orientation.next());
-            puck.attach_to_player(&red_player);
+
+                img.copy_non_trasparent_from(
+                    &puck.image(palette),
+                    puck.position().x as u32,
+                    puck.position().y as u32,
+                )
+                .unwrap();
+
+                for (point, collider_type) in player.hit_box().iter() {
+                    let img_point = player.position() + point;
+                    let pixel = match collider_type {
+                        ColliderType::Player => Rgba([255, 55, 55, 255]),
+                        ColliderType::Stick => Rgba([55, 255, 125, 255]),
+                        ColliderType::Catcher => Rgba([55, 125, 255, 255]),
+                        _ => unreachable!(),
+                    };
+                    img.put_pixel(img_point.x as u32, img_point.y as u32, pixel);
+                }
+
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
+
+                let info = Paragraph::new(format!("Orientation {}", player.orientation as u8));
+                frame.render_widget(info, split[0]);
+
+                let paragraph = Paragraph::new(img_to_lines(&img));
+                frame.render_widget(paragraph, split[1]);
+            })?;
+            player.rotate(player.orientation.next());
             std::thread::sleep(time::Duration::from_millis(500));
         }
+
+        terminal.clear()?;
+        Ok(())
     }
 
     #[test]
-    fn test_goalie_collision() {
-        let mut puck = Puck::new();
-        puck.set_position((MAX_X as f32 - 25.0, 42.0));
-        puck.set_velocity((0.85, 0.0));
+    fn test_player_puck_collisions() -> AppResult<()> {
+        init()?;
+        let mut game = Game::new();
+        game.state = GameState::Running;
 
-        let mut goalie = Goalie::new(GameSide::Blue);
-
-        // create crossterm terminal to stdout
         let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
-        terminal.clear().unwrap();
-        let palette = Palette::Dark;
-
-        let mut last_tick = Instant::now();
+        game.puck.set_position(U16Vec2::new(80, 40));
+        game.puck.set_velocity(Vec2::new(0.1, 0.0));
 
         let start = Instant::now();
-
         loop {
-            let now = Instant::now();
-            let deltatime = now.duration_since(last_tick).as_millis() as f32;
-            let puck_previous_position = puck.position;
-            puck.update(deltatime);
-
-            if resolve_collision(
-                &mut puck,
-                &mut goalie,
-                CollisionType::Minimal,
-                CollisionType::Minimal,
-            ) {
-                puck.set_position(puck_previous_position);
+            if let Err(e) = game.update() {
+                log::error!("Update error: {e}");
             }
 
-            terminal
-                .draw(|frame| {
-                    let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
-                        .split(frame.size());
-                    let mut img = base_image(palette);
+            terminal.draw(|frame| {
+                let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
+                    .split(frame.area());
 
-                    img.copy_non_trasparent_from(
-                        &goalie.image(palette),
-                        goalie.position().0 as u32,
-                        goalie.position().1 as u32,
-                    )
-                    .unwrap();
+                let player = &game.blue_data.player;
+                if let Some(colliders) = are_colliding(player, &game.puck) {
+                    let paragraph = Paragraph::new(format!("Collision detected: {:#?}", colliders));
+                    frame.render_widget(paragraph, split[0]);
+                }
 
-                    img.copy_non_trasparent_from(
-                        &puck.image(palette),
-                        puck.position().0 as u32,
-                        puck.position().1 as u32,
-                    )
-                    .unwrap();
+                let mut image = game.image().expect("update error");
 
-                    let paragraph = Paragraph::new(img_to_lines(&img));
-                    frame.render_widget(paragraph, split[1]);
-                })
-                .unwrap();
+                for (point, collider_type) in player.hit_box().iter() {
+                    let img_point = player.position() + point;
+                    let pixel = match collider_type {
+                        ColliderType::Player => Rgba([255, 55, 55, 255]),
+                        ColliderType::Stick => Rgba([55, 255, 125, 255]),
+                        ColliderType::Catcher => Rgba([55, 125, 255, 255]),
+                        _ => unreachable!(),
+                    };
+                    image.put_pixel(img_point.x as u32, img_point.y as u32, pixel);
+                }
 
-            std::thread::sleep(time::Duration::from_millis(20));
-            last_tick = now;
+                for (point, collider_type) in game.puck.hit_box().iter() {
+                    let img_point = game.puck.position() + point;
+                    let pixel = match collider_type {
+                        ColliderType::Puck => Rgba([0, 155, 255, 255]),
+                        _ => unreachable!(),
+                    };
+                    image.put_pixel(img_point.x as u32, img_point.y as u32, pixel);
+                }
 
-            if start.elapsed() > time::Duration::from_secs(5) {
+                let paragraph = Paragraph::new(img_to_lines(&image));
+                frame.render_widget(paragraph, split[1]);
+            })?;
+
+            if start.elapsed() > Duration::from_millis(5000) {
                 break;
             }
         }
+
+        terminal.clear()?;
+        Ok(())
+    }
+
+    fn position_puck_over(player: &Player, target_local: U16Vec2) -> Puck {
+        let mut puck = Puck::new();
+        let puck_first_local = *puck.hit_box().iter().next().expect("puck has pixels").0;
+        let target_world = player.position() + target_local;
+        puck.set_position(target_world - puck_first_local);
+        puck
+    }
+
+    fn find_collider_in(player: &Player, kind: ColliderType) -> U16Vec2 {
+        *player
+            .previous_hit_box()
+            .iter()
+            .find(|(_, &ct)| ct == kind)
+            .unwrap_or_else(|| panic!("previous hit_box has no {kind:?} pixel"))
+            .0
+    }
+
+    #[test]
+    fn swept_rotation_catch_returns_none_without_rotation() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        assert!(!player.just_rotated());
+
+        let mut puck = Puck::new();
+        puck.set_position(player.position());
+
+        assert_eq!(swept_rotation_catch(&puck, &player), None);
+    }
+
+    #[test]
+    fn swept_rotation_catch_returns_none_when_puck_far_away() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        player.rotate(Orientation::Up);
+        assert!(player.just_rotated());
+
+        let mut puck = Puck::new();
+        puck.set_position(U16Vec2::new(120, 70));
+
+        assert_eq!(swept_rotation_catch(&puck, &player), None);
+    }
+
+    #[test]
+    fn swept_rotation_catch_detects_stick_in_previous_orientation() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        player.rotate(Orientation::Up);
+
+        let stick_local = find_collider_in(&player, ColliderType::Stick);
+        let puck = position_puck_over(&player, stick_local);
+
+        let result = swept_rotation_catch(&puck, &player);
+        assert!(
+            matches!(result, Some((ColliderType::Puck, ColliderType::Stick))),
+            "expected Stick hit, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn swept_rotation_catch_detects_catcher_in_previous_orientation() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        player.rotate(Orientation::Up);
+
+        let catcher_local = find_collider_in(&player, ColliderType::Catcher);
+        let puck = position_puck_over(&player, catcher_local);
+
+        let result = swept_rotation_catch(&puck, &player);
+        assert!(
+            matches!(result, Some((ColliderType::Puck, ColliderType::Catcher))),
+            "expected Catcher hit, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn new_practice_flips_the_practice_flag() {
+        let regular = Game::new();
+        assert!(!regular.practice_mode);
+        let practice = Game::new_practice();
+        assert!(practice.practice_mode);
+        // The visible sprite set should be smaller in practice (no Blue player).
+        let practice_count = practice.visible_sprites().iter().filter(|s| s.is_some()).count();
+        let regular_count = regular.visible_sprites().iter().filter(|s| s.is_some()).count();
+        assert!(practice_count < regular_count);
+    }
+
+    #[test]
+    fn just_rotated_clears_after_update_body() {
+        let mut player = Player::new(GameSide::Red);
+        player.rotate(Orientation::Up);
+        assert!(player.just_rotated(), "rotation should set the flag");
+
+        player.update(0.0);
+        assert!(
+            !player.just_rotated(),
+            "update_body should clear previous_orientation back to current",
+        );
     }
 }

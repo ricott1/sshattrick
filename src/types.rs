@@ -1,164 +1,104 @@
-use ratatui::{
-    backend::CrosstermBackend,
-    style::{Style, Stylize},
-    Terminal,
-};
-use russh::{server::Handle, ChannelId, CryptoVec};
-use std::{
-    fmt::{Debug, Formatter},
-    io::Write,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use crossterm::event::{KeyEvent, MouseEvent};
+use glam::Vec2;
+use image::Rgba;
 
-pub type AppResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-pub type Tick = u128;
-pub type SshTerminal = Terminal<CrosstermBackend<TerminalHandle>>;
+pub type AppResult<T> = Result<T, anyhow::Error>;
 
-pub trait SystemTimeTick {
-    fn now() -> Self;
-    fn from_system_time(time: SystemTime) -> Self;
-    fn as_system_time(&self) -> SystemTime;
-}
-
-impl SystemTimeTick for Tick {
-    fn now() -> Self {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    }
-
-    fn from_system_time(time: SystemTime) -> Tick {
-        time.duration_since(UNIX_EPOCH).unwrap().as_millis()
-    }
-
-    fn as_system_time(&self) -> SystemTime {
-        UNIX_EPOCH + std::time::Duration::from_millis(*self as u64)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GameSide {
+    #[default]
     Red,
     Blue,
 }
 
 impl GameSide {
-    pub fn bar_style(&self) -> Style {
+    pub fn opposite(self) -> Self {
         match self {
-            GameSide::Red => Style::new().red(),
-            GameSide::Blue => Style::new().blue(),
+            GameSide::Red => GameSide::Blue,
+            GameSide::Blue => GameSide::Red,
         }
     }
 }
 
-#[derive(Clone)]
-pub struct TerminalHandle {
-    handle: Handle,
-    // The sink collects the data which is finally flushed to the handle.
-    sink: Vec<u8>,
-    channel_id: ChannelId,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Palette {
+    #[default]
+    Dark,
+    Light,
+    Basket,
+    Alt,
 }
 
-impl Debug for TerminalHandle {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TerminalHandle")
-            .field("channel_id", &self.channel_id)
-            .finish()
-    }
-}
-
-impl TerminalHandle {
-    pub fn new(handle: Handle, channel_id: ChannelId) -> Self {
-        Self {
-            handle,
-            sink: Vec::new(),
-            channel_id,
+impl Palette {
+    pub fn skate_trace_color(&self) -> Rgba<u8> {
+        match self {
+            Palette::Dark => Rgba([55, 55, 85, 255]),
+            Palette::Light => Rgba([145, 215, 255, 255]),
+            Palette::Basket => Rgba([55, 55, 85, 255]),
+            Palette::Alt => Rgba([105, 55, 55, 255]),
         }
     }
+}
 
-    pub async fn close(&self) -> Result<(), ()> {
-        self.handle.close(self.channel_id).await?;
-        Ok(())
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum Orientation {
+    #[default]
+    Up,
+    UpLeft,
+    Left,
+    DownLeft,
+    Down,
+    DownRight,
+    Right,
+    UpRight,
+}
+
+impl Orientation {
+    pub const MAX: usize = 8;
+
+    pub fn next(self) -> Self {
+        ((self as usize + 1) % Self::MAX).into()
     }
 
-    pub async fn eof(&self) -> Result<(), ()> {
-        self.handle.eof(self.channel_id).await?;
-        Ok(())
+    pub fn previous(self) -> Self {
+        ((self as usize + Self::MAX - 1) % Self::MAX).into()
     }
 
-    pub fn message(&mut self, text: &str) -> std::io::Result<()> {
-        let crypto_vec = CryptoVec::from_slice(text.as_bytes());
-        self.write(crypto_vec.as_ref())?;
-        self.flush()?;
-        Ok(())
-    }
-
-    async fn _flush(&self) -> std::io::Result<usize> {
-        let handle = self.handle.clone();
-        let channel_id = self.channel_id.clone();
-        let data: CryptoVec = self.sink.clone().into();
-        let data_length = data.len();
-        let result = handle.data(channel_id, data).await;
-        if result.is_err() {
-            log::error!("Failed to send data: {:?}", result);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to send data",
-            ));
+    pub fn shooting_direction(self) -> Vec2 {
+        match self {
+            Orientation::Up => Vec2::new(1.0, -1.0),
+            Orientation::UpLeft => Vec2::new(0.0, -1.0),
+            Orientation::Left => Vec2::new(-1.0, -1.0),
+            Orientation::DownLeft => Vec2::new(-1.0, 0.0),
+            Orientation::Down => Vec2::new(-1.0, 1.0),
+            Orientation::DownRight => Vec2::new(0.0, 1.0),
+            Orientation::Right => Vec2::new(1.0, 1.0),
+            Orientation::UpRight => Vec2::new(1.0, 0.0),
         }
-        log::debug!(
-            "Sent {} bytes of data to channel {}",
-            data_length,
-            channel_id
-        );
-        Ok(data_length)
+        .normalize()
     }
 }
 
-// The crossterm backend writes to the terminal handle.
-impl std::io::Write for TerminalHandle {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.sink.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        futures::executor::block_on(self._flush())?;
-        self.sink.clear();
-        Ok(())
-    }
-}
-
-pub trait Vector2D {
-    fn normalize(&self) -> Self;
-    fn dot(&self, other: &Self) -> f32;
-    fn magnitude(&self) -> f32;
-    fn mul(self, rhs: f32) -> Self;
-}
-
-impl Vector2D for (f32, f32) {
-    fn normalize(&self) -> Self {
-        let length = self.magnitude();
-        if length == 0.0 {
-            return (0.0, 0.0);
+impl From<usize> for Orientation {
+    fn from(value: usize) -> Self {
+        match value {
+            0 => Orientation::Up,
+            1 => Orientation::UpLeft,
+            2 => Orientation::Left,
+            3 => Orientation::DownLeft,
+            4 => Orientation::Down,
+            5 => Orientation::DownRight,
+            6 => Orientation::Right,
+            7 => Orientation::UpRight,
+            _ => panic!("Invalid orientation"),
         }
-        self.mul(1.0 / length)
     }
+}
 
-    fn dot(&self, other: &Self) -> f32 {
-        let (x1, y1) = self;
-        let (x2, y2) = other;
-        x1 * x2 + y1 * y2
-    }
-
-    fn magnitude(&self) -> f32 {
-        let (x, y) = self;
-        (x.powi(2) + y.powi(2)).sqrt()
-    }
-
-    fn mul(self, rhs: f32) -> Self {
-        let (x, y) = self;
-        (x * rhs, y * rhs)
-    }
+#[derive(Clone, Copy, Debug)]
+pub enum TerminalEvent {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+    Resize(u16, u16),
+    Quit,
 }
