@@ -2,7 +2,6 @@ use super::client::AppClient;
 use crate::game::{Game, GameState};
 use crate::tui::Tui;
 use crate::types::{AppResult, GameSide, TerminalEvent};
-use crate::utils::img_to_lines;
 use itertools::Either;
 use rand::RngExt;
 use russh::keys::ssh_key::private::{Ed25519Keypair, Ed25519PrivateKey, KeypairData};
@@ -198,7 +197,7 @@ impl AppServer {
         if red.is_none() && blue.is_none() {
             return Ok(());
         }
-        let image_lines = img_to_lines(&game.image()?);
+        let image_lines = game.render_lines()?;
         for (slot, side) in [
             (red.as_mut(), GameSide::Red),
             (blue.as_mut(), GameSide::Blue),

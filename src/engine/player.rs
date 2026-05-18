@@ -14,20 +14,9 @@ use super::utils::RectSide;
 pub struct ShootingState {
     pub direction: Option<Vec2>,
     pub counter: f32,
-    recoil: f32,
 }
 
 impl ShootingState {
-    const MAX_SHOOTING_COUNTER: f32 = 0.5;
-    const MAX_RECOIL_COUNTER: f32 = 0.5;
-    pub fn new(direction: Vec2) -> Self {
-        Self {
-            direction: Some(direction),
-            counter: 0.0,
-            recoil: 0.0,
-        }
-    }
-
     pub fn reset(&mut self) {
         self.direction = None;
         self.counter = 0.0;
@@ -36,7 +25,7 @@ impl ShootingState {
     pub fn shot_towards(&mut self, deltatime: f32) -> Option<Vec2> {
         if self.is_shooting() {
             self.counter += deltatime;
-            if self.counter > Self::MAX_SHOOTING_COUNTER {
+            if self.counter > SHOOTING_WINDUP_MILLISECONDS {
                 let direction = self.direction.expect("Direction should exist");
                 self.reset();
                 return Some(direction);
@@ -48,7 +37,6 @@ impl ShootingState {
     pub fn shoot(&mut self, direction: Vec2) {
         self.direction = Some(direction);
         self.counter = 0.001;
-        self.recoil = Self::MAX_RECOIL_COUNTER;
     }
 
     pub fn is_shooting(&self) -> bool {
@@ -97,6 +85,10 @@ impl Body for Player {
 
     fn update_body(&mut self, deltatime: f32) {
         self.previous_position = self.position;
+        // Treat previous_orientation as a per-tick snapshot. Anything that
+        // wants to know "did the player rotate this tick?" reads it after
+        // rotate() runs (which happens later in update_running).
+        self.previous_orientation = self.orientation;
 
         if self.velocity.length() > MAX_PLAYER_VELOCITY {
             self.velocity = MAX_PLAYER_VELOCITY * self.velocity.normalize()
@@ -132,6 +124,19 @@ impl Sprite for Player {
 }
 
 impl Entity for Player {}
+
+impl Player {
+    pub fn just_rotated(&self) -> bool {
+        self.previous_orientation != self.orientation
+    }
+
+    pub fn previous_hit_box(&self) -> &HitBox {
+        &PLAYER_IMAGE_DATA
+            .get(&self.side)
+            .expect("Image data should exist")
+            .hit_boxes[self.previous_orientation as usize]
+    }
+}
 
 impl Player {
     fn initial_state(side: GameSide) -> (Vec2, Orientation) {

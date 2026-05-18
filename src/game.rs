@@ -62,9 +62,9 @@ impl GameData {
                 KeyCode::Right => Vec2::X * SHOOTING_DIRECTION_MODIFIER,
                 _ => Vec2::ZERO,
             };
-            player.shooting_state.direction = Some(
-                player.shooting_state.direction.unwrap_or(player.velocity) + shooting_modifier,
-            );
+            let current = player.shooting_state.direction.unwrap_or(player.velocity);
+            player.shooting_state.direction =
+                Some((current + shooting_modifier).clamp_length_max(SHOOTING_DIRECTION_MAX_MAGNITUDE));
             return;
         }
 
@@ -175,17 +175,6 @@ impl Game {
     }
 
     fn update_running(&mut self, deltatime: f32) -> AppResult<()> {
-        if let Some((ColliderType::Puck, ColliderType::Player)) =
-            are_colliding(&self.puck, &self.red_data.player)
-        {
-            self.puck.possession = Some(GameSide::Red);
-        }
-        if let Some((ColliderType::Puck, ColliderType::Player)) =
-            are_colliding(&self.puck, &self.blue_data.player)
-        {
-            self.puck.possession = Some(GameSide::Blue);
-        }
-
         for player in [&mut self.red_data.player, &mut self.blue_data.player] {
             player.update(deltatime);
             player.maybe_bounce_against_rect(
@@ -208,6 +197,16 @@ impl Game {
                     &mut self.blue_data.player,
                     PLAYER_PLAYER_RESTITUTION,
                 );
+                // Unstick: if they're still overlapping after the momentum bounce,
+                // give each a tiny push along the separation normal so the next
+                // tick doesn't immediately re-trigger the same collision.
+                if are_colliding(&self.red_data.player, &self.blue_data.player).is_some() {
+                    let red_pos = self.red_data.player.position().as_vec2();
+                    let blue_pos = self.blue_data.player.position().as_vec2();
+                    let normal = (blue_pos - red_pos).normalize_or_zero();
+                    self.red_data.player.velocity -= normal * PLAYER_SEPARATION_IMPULSE;
+                    self.blue_data.player.velocity += normal * PLAYER_SEPARATION_IMPULSE;
+                }
             }
         }
 
@@ -289,19 +288,39 @@ impl Game {
             GameSide::Blue => (&mut self.blue_data, &mut self.red_data),
         };
 
-        let collision = are_colliding(&self.puck, &own.player);
+        // After shooting, briefly refuse to re-grab the puck so it has time to
+        // fly out of our own catcher area.
+        let just_shot = own.player.after_shooting_counter > 0.0;
+
+        let collision = are_colliding(&self.puck, &own.player)
+            .or_else(|| swept_rotation_catch(&self.puck, &own.player));
         match collision {
-            Some((ColliderType::Puck, ColliderType::Catcher)) => match self.puck.possession {
-                Some(other) if other != side => {
-                    if own.player.after_got_stolen_counter == 0.0 {
-                        self.puck.possession = Some(side);
-                        opp.player.after_got_stolen_counter = AFTER_GOT_STOLEN_COUNTER_MILLISECONDS;
-                        let _ = other;
+            // Catcher: grab a free puck OR steal from the opponent (with cooldown).
+            Some((ColliderType::Puck, ColliderType::Catcher)) if !just_shot => {
+                match self.puck.possession {
+                    Some(_owner) if _owner == side.opposite() => {
+                        if own.player.after_got_stolen_counter == 0.0 {
+                            self.puck.possession = Some(side);
+                            opp.player.after_got_stolen_counter =
+                                AFTER_GOT_STOLEN_COUNTER_MILLISECONDS;
+                            self.puck.attach_to_player(&own.player);
+                        }
                     }
+                    None => {
+                        self.puck.possession = Some(side);
+                        self.puck.attach_to_player(&own.player);
+                    }
+                    _ => {}
                 }
-                None => self.puck.possession = Some(side),
-                _ => {}
-            },
+            }
+            // Stick: grab a free puck (no stealing).
+            Some((ColliderType::Puck, ColliderType::Stick))
+                if !just_shot && self.puck.possession.is_none() =>
+            {
+                self.puck.possession = Some(side);
+                self.puck.attach_to_player(&own.player);
+            }
+            // Body: bounce when the puck is free; otherwise the owner's attach loop handles it.
             Some((ColliderType::Puck, ColliderType::Player)) if self.puck.possession.is_none() => {
                 inelastic_collision(&mut self.puck, &mut own.player, PUCK_RESTITUTION);
             }
@@ -374,7 +393,13 @@ impl Game {
             .get(&self.palette)
             .expect("Pitch image should exist")
             .clone();
+        self.composite_dynamic(&mut img)?;
+        Ok(img)
+    }
 
+    /// Blit skate traces and sprite pixels onto `img` (caller supplies the pitch
+    /// already loaded in). Shared between `image()` and `render_lines()`.
+    fn composite_dynamic(&self, img: &mut RgbaImage) -> AppResult<()> {
         for trace in &self.skate_traces {
             img.put_pixel(
                 trace.x as u32,
@@ -382,28 +407,81 @@ impl Game {
                 self.palette.skate_trace_color(),
             );
         }
-
         let palette = self.palette;
-        let sprites: [&dyn Sprite; 5] = [
-            &self.red_data.player,
-            &self.red_data.goalie,
-            &self.blue_data.player,
-            &self.blue_data.goalie,
-            &self.puck,
-        ];
-        let positions = [
-            self.red_data.player.position(),
-            self.red_data.goalie.position(),
-            self.blue_data.player.position(),
-            self.blue_data.goalie.position(),
-            self.puck.position(),
-        ];
-        for (sprite, pos) in sprites.iter().zip(positions.iter()) {
+        for (sprite, pos) in self.sprites_with_positions() {
             img.copy_non_trasparent_from(sprite.image(palette), pos.x as u32, pos.y as u32)?;
         }
-
-        Ok(img)
+        Ok(())
     }
+
+    fn sprites_with_positions(&self) -> [(&dyn Sprite, U16Vec2); 5] {
+        [
+            (&self.red_data.player, self.red_data.player.position()),
+            (&self.red_data.goalie, self.red_data.goalie.position()),
+            (&self.blue_data.player, self.blue_data.player.position()),
+            (&self.blue_data.goalie, self.blue_data.goalie.position()),
+            (&self.puck, self.puck.position()),
+        ]
+    }
+
+    /// Build the per-frame `Vec<Line>` shown in the TUI. Starts from the
+    /// statically pre-rendered pitch lines and only re-rasterises the cells
+    /// actually touched by sprites and skate traces.
+    pub fn render_lines(&self) -> AppResult<Vec<ratatui::text::Line<'static>>> {
+        let mut lines = PITCH_LINES
+            .get(&self.palette)
+            .expect("Pitch lines should exist")
+            .clone();
+
+        let mut composed = PITCH_IMAGES
+            .get(&self.palette)
+            .expect("Pitch image should exist")
+            .clone();
+        self.composite_dynamic(&mut composed)?;
+
+        for (sprite, pos) in self.sprites_with_positions() {
+            let size = sprite.size();
+            let cy_start = pos.y / 2;
+            let cy_end = (pos.y + size.y).div_ceil(2);
+            let cx_start = pos.x;
+            let cx_end = pos.x + size.x;
+            rerender_cells(&mut lines, &composed, cx_start..cx_end, cy_start..cy_end);
+        }
+
+        for trace in &self.skate_traces {
+            let cy = trace.y / 2;
+            rerender_cells(&mut lines, &composed, trace.x..(trace.x + 1), cy..(cy + 1));
+        }
+
+        Ok(lines)
+    }
+}
+
+/// Detect a catch that happened while the player was rotating this tick by
+/// re-running the granular pixel check against the previous orientation's
+/// stick/catcher hit_box. Approximates the swept arc with two snapshots, which
+/// closes the worst gap (stick passes over puck mid-rotation) without
+/// computing the full arc.
+fn swept_rotation_catch(puck: &Puck, player: &Player) -> Option<(ColliderType, ColliderType)> {
+    if !player.just_rotated() {
+        return None;
+    }
+    let prev_hit_box = player.previous_hit_box();
+    let player_pos = player.position();
+    let puck_pos = puck.position();
+    for (&puck_point, &_puck_collider) in puck.hit_box().iter() {
+        let world = puck_pos + puck_point;
+        if world.x < player_pos.x || world.y < player_pos.y {
+            continue;
+        }
+        let local = world - player_pos;
+        if let Some(&player_collider) = prev_hit_box.get(&local) {
+            if matches!(player_collider, ColliderType::Stick | ColliderType::Catcher) {
+                return Some((ColliderType::Puck, player_collider));
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -897,5 +975,92 @@ mod test {
 
         terminal.clear()?;
         Ok(())
+    }
+
+    fn position_puck_over(player: &Player, target_local: U16Vec2) -> Puck {
+        let mut puck = Puck::new();
+        let puck_first_local = *puck.hit_box().iter().next().expect("puck has pixels").0;
+        let target_world = player.position() + target_local;
+        puck.set_position(target_world - puck_first_local);
+        puck
+    }
+
+    fn find_collider_in(player: &Player, kind: ColliderType) -> U16Vec2 {
+        *player
+            .previous_hit_box()
+            .iter()
+            .find(|(_, &ct)| ct == kind)
+            .unwrap_or_else(|| panic!("previous hit_box has no {kind:?} pixel"))
+            .0
+    }
+
+    #[test]
+    fn swept_rotation_catch_returns_none_without_rotation() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        assert!(!player.just_rotated());
+
+        let mut puck = Puck::new();
+        puck.set_position(player.position());
+
+        assert_eq!(swept_rotation_catch(&puck, &player), None);
+    }
+
+    #[test]
+    fn swept_rotation_catch_returns_none_when_puck_far_away() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        player.rotate(Orientation::Up);
+        assert!(player.just_rotated());
+
+        let mut puck = Puck::new();
+        puck.set_position(U16Vec2::new(120, 70));
+
+        assert_eq!(swept_rotation_catch(&puck, &player), None);
+    }
+
+    #[test]
+    fn swept_rotation_catch_detects_stick_in_previous_orientation() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        player.rotate(Orientation::Up);
+
+        let stick_local = find_collider_in(&player, ColliderType::Stick);
+        let puck = position_puck_over(&player, stick_local);
+
+        let result = swept_rotation_catch(&puck, &player);
+        assert!(
+            matches!(result, Some((ColliderType::Puck, ColliderType::Stick))),
+            "expected Stick hit, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn swept_rotation_catch_detects_catcher_in_previous_orientation() {
+        let mut player = Player::new(GameSide::Red);
+        player.set_position(U16Vec2::new(50, 40));
+        player.rotate(Orientation::Up);
+
+        let catcher_local = find_collider_in(&player, ColliderType::Catcher);
+        let puck = position_puck_over(&player, catcher_local);
+
+        let result = swept_rotation_catch(&puck, &player);
+        assert!(
+            matches!(result, Some((ColliderType::Puck, ColliderType::Catcher))),
+            "expected Catcher hit, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn just_rotated_clears_after_update_body() {
+        let mut player = Player::new(GameSide::Red);
+        player.rotate(Orientation::Up);
+        assert!(player.just_rotated(), "rotation should set the flag");
+
+        player.update(0.0);
+        assert!(
+            !player.just_rotated(),
+            "update_body should clear previous_orientation back to current",
+        );
     }
 }

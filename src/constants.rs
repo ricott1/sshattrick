@@ -56,7 +56,11 @@ pub const ACCELERATION: f32 = 0.0025;
 pub const DECELERATION: f32 = 0.005;
 pub const MAX_PLAYER_VELOCITY: f32 = 0.275;
 
-pub const PUCK_FRICTION_VELOCITY_LOSS: f32 = 0.99;
+// Exponential decay applied to puck velocity per millisecond.
+// 0.998995 ≈ 0.99 over a 10 ms physics tick, so behaviour matches the previous
+// per-tick formulation under the default tick rate but stays correct if the
+// tick rate ever shifts or update bursts deliver variable deltatime.
+pub const PUCK_FRICTION_PER_MS: f32 = 0.998_995;
 pub const COFFICIENT_OF_WALL_BOUNCING: f32 = 0.25;
 
 pub const SKATE_TRACE_LENGTH: usize = 512;
@@ -64,10 +68,13 @@ pub const SKATE_TRACE_LENGTH: usize = 512;
 pub const AFTER_SHOOTING_COUNTER_MILLISECONDS: f32 = 50.0;
 pub const AFTER_GOT_STOLEN_COUNTER_MILLISECONDS: f32 = 50.0;
 pub const SHOOTING_DIRECTION_MODIFIER: f32 = 0.35;
+pub const SHOOTING_DIRECTION_MAX_MAGNITUDE: f32 = 3.0;
 pub const SHOOTING_POWER: f32 = 0.2;
 pub const SHOOTING_VELOCITY_DAMPING: f32 = 0.85;
+pub const SHOOTING_WINDUP_MILLISECONDS: f32 = 200.0;
 
 pub const AREA_RESTITUTION: f32 = 0.01;
 pub const PLAYER_PLAYER_RESTITUTION: f32 = 0.95;
 pub const PUCK_RESTITUTION: f32 = 0.75;
 pub const GOALIE_RESTITUTION: f32 = 0.8;
+pub const PLAYER_SEPARATION_IMPULSE: f32 = 0.15;

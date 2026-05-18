@@ -43,7 +43,7 @@ impl Body for Puck {
 
     fn update_body(&mut self, deltatime: f32) {
         self.previous_position = self.position;
-        self.velocity *= PUCK_FRICTION_VELOCITY_LOSS;
+        self.velocity *= PUCK_FRICTION_PER_MS.powf(deltatime);
         self.position += self.velocity * deltatime;
 
         if (self.position.x as u16) < MIN_X {
