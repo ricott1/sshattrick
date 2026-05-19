@@ -4,12 +4,14 @@ mod constants;
 mod engine;
 mod game;
 mod lobby;
-pub mod ssh;
+mod matchmaker;
+mod ssh_game;
 mod traits;
 mod tui;
 mod types;
 mod ui;
 mod utils;
 
+pub use ssh_game::SshattrickGame;
 pub use types::AppResult;
 pub use utils::store_path;

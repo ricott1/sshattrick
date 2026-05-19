@@ -1,11 +1,11 @@
 use crate::constants::UI_SCREEN_SIZE;
 use crate::game::Game;
-use crate::ssh::SSHWriterProxy;
-use crate::types::{AppResult, GameSide, TerminalEvent};
+use crate::types::{AppResult, GameSide};
 use crate::ui;
-use crossterm::cursor::{Hide, Show};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, SetTitle};
+use crossterm::cursor::Hide;
+use crossterm::event::EnableMouseCapture;
+use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, SetTitle};
+use frittura_ssh_core::{SshWriterProxy, TerminalEvent};
 use ratatui::layout::Rect;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::text::Line;
@@ -17,14 +17,14 @@ pub struct Tui {
     username: String,
     games_played: usize,
     games_won: usize,
-    terminal: Terminal<CrosstermBackend<SSHWriterProxy>>,
+    terminal: Terminal<CrosstermBackend<SshWriterProxy>>,
     events: Receiver<TerminalEvent>,
 }
 
 impl Tui {
     pub fn new(
         username: String,
-        writer: SSHWriterProxy,
+        writer: SshWriterProxy,
         events: Receiver<TerminalEvent>,
     ) -> AppResult<Self> {
         let backend = CrosstermBackend::new(writer);
@@ -127,18 +127,9 @@ impl Tui {
         self.terminal.backend_mut().writer_mut().send().await?;
         Ok(())
     }
-}
 
-impl Drop for Tui {
-    fn drop(&mut self) {
-        let backend = self.terminal.backend_mut();
-        let _ = crossterm::execute!(
-            backend,
-            LeaveAlternateScreen,
-            DisableMouseCapture,
-            Clear(ClearType::All),
-            Show
-        );
-        backend.writer_mut().send_in_background();
+    /// Restore the terminal and close the SSH channel, awaited end-to-end.
+    pub async fn close(mut self) {
+        self.terminal.backend_mut().writer_mut().send_and_close().await;
     }
 }

@@ -1,4 +1,3 @@
-use crossterm::event::{KeyEvent, MouseEvent};
 use glam::Vec2;
 use image::Rgba;
 
@@ -95,10 +94,3 @@ impl From<usize> for Orientation {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum TerminalEvent {
-    Key(KeyEvent),
-    Mouse(MouseEvent),
-    Resize(u16, u16),
-    Quit,
-}

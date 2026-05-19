@@ -1,6 +1,6 @@
 [package]
 name = "sshattrick"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Hockey in your terminal over SSH."
 license = "GPL-3.0-only"
@@ -29,7 +29,6 @@ log = "0.4.27"
 log4rs = { version = "1.4.0", default-features = false, features = ["file_appender", "pattern_encoder"] }
 rand = { version = "0.10.1", default-features = false, features = ["std", "std_rng", "thread_rng"] }
 ratatui = { version = "0.30.0", features = ["unstable-backend-writer"] }
-russh = "0.60.3"
+frittura-ssh-core = "0.1"
 tokio = { version = "1.52.1", default-features = false, features = ["rt-multi-thread", "time", "macros", "sync"] }
-tokio-util = { version = "0.7.18", default-features = false, features = ["rt"] }
 uuid = { version = "1.23.1", default-features = false, features = ["v4", "fast-rng"] }
