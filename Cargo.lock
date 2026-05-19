@@ -1011,6 +1011,8 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 [[package]]
 name = "frittura-ssh-core"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a89c7e7d646b44f2e333ff9b889d073391e85423004e6c9a5085aeb1294498d"
 dependencies = [
  "anyhow",
  "crossterm",
