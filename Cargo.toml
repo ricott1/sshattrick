@@ -29,6 +29,6 @@ log = "0.4.27"
 log4rs = { version = "1.4.0", default-features = false, features = ["file_appender", "pattern_encoder"] }
 rand = { version = "0.10.1", default-features = false, features = ["std", "std_rng", "thread_rng"] }
 ratatui = { version = "0.30.0", features = ["unstable-backend-writer"] }
-frittura-ssh-core = "0.1"
+frittura-ssh-core = { path = "../frittura-ssh/crates/frittura-ssh-core" }
 tokio = { version = "1.52.1", default-features = false, features = ["rt-multi-thread", "time", "macros", "sync"] }
 uuid = { version = "1.23.1", default-features = false, features = ["v4", "fast-rng"] }

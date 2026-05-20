@@ -1,11 +1,7 @@
-use std::time::{Duration, Instant};
-
 use crate::game::Game;
 use crate::tui::Tui;
 
 pub const FRIEND_CODE_LEN: usize = 6;
-pub const LOBBY_IDLE_KICK: Duration = Duration::from_secs(60);
-pub const LOBBY_IDLE_WARNING_REMAINING: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LobbyStats {
@@ -57,11 +53,9 @@ pub struct PendingPlayer {
     /// new connection, or lobby stats changed). Practising players ignore
     /// this and always redraw at the game tick rate.
     pub dirty: bool,
-    /// Last keystroke from this player. Drives the lobby inactivity kick
-    /// (LOBBY_IDLE_KICK) and the warning countdown. Resize events are
-    /// excluded - some terminals fire spurious WINCH events from tile-manager
-    /// animations and we don't want those to count as "the user is here".
-    pub last_input_at: Instant,
+    /// Seconds until idle-kick, set from `TerminalEvent::IdleWarning` and
+    /// cleared on `Key`.
+    pub idle_warning: Option<u32>,
 }
 
 impl PendingPlayer {
@@ -70,7 +64,7 @@ impl PendingPlayer {
             tui,
             mode: PlayerMode::Idle,
             dirty: true,
-            last_input_at: Instant::now(),
+            idle_warning: None,
         }
     }
 }

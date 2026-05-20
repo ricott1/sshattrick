@@ -2,7 +2,7 @@ use super::engine::{goalie::Goalie, player::Player, puck::Puck};
 use crate::{
     collision_detection::{are_colliding, inelastic_collision},
     constants::*,
-    engine::{area::Area, utils::RectSide},
+    engine::area::Area,
     traits::{Body, ColliderType, Entity, Sprite},
     types::*,
     utils::*,
@@ -63,8 +63,9 @@ impl GameData {
                 _ => Vec2::ZERO,
             };
             let current = player.shooting_state.direction.unwrap_or(player.velocity);
-            player.shooting_state.direction =
-                Some((current + shooting_modifier).clamp_length_max(SHOOTING_DIRECTION_MAX_MAGNITUDE));
+            player.shooting_state.direction = Some(
+                (current + shooting_modifier).clamp_length_max(SHOOTING_DIRECTION_MAX_MAGNITUDE),
+            );
             return;
         }
 
@@ -179,21 +180,10 @@ impl Game {
         self.skate_traces.clear();
     }
 
-    pub fn reset(&mut self) {
-        self.reset_after_goal();
-        self.red_data.score = 0;
-        self.blue_data.score = 0;
-        self.timer = 0;
-    }
-
     fn update_running(&mut self, deltatime: f32) -> AppResult<()> {
         for player in [&mut self.red_data.player, &mut self.blue_data.player] {
             player.update(deltatime);
-            player.maybe_bounce_against_rect(
-                PITCH_INNER_RECT,
-                COFFICIENT_OF_WALL_BOUNCING,
-                RectSide::Inside,
-            );
+            player.maybe_bounce_against_rect(PITCH_INNER_RECT, COFFICIENT_OF_WALL_BOUNCING);
 
             if are_colliding(player, &self.red_data.area).is_some() {
                 inelastic_collision(player, &mut self.red_data.area, AREA_RESTITUTION);
@@ -275,7 +265,9 @@ impl Game {
         if self.practice_mode {
             self.blue_data.goalie.random_walk(deltatime);
         } else {
-            self.blue_data.goalie.align_to_player(&self.blue_data.player);
+            self.blue_data
+                .goalie
+                .align_to_player(&self.blue_data.player);
         }
 
         self.puck.update(deltatime);
@@ -418,9 +410,11 @@ impl Game {
             }
             GameState::Running => {
                 self.update_running(deltatime)?;
-                self.timer += deltatime as u128;
-                if self.timer > Self::DURATION_MILLISECONDS {
-                    self.end_with_winner(self.compute_winner(), false);
+                if !self.practice_mode {
+                    self.timer += deltatime as u128;
+                    if self.timer > Self::DURATION_MILLISECONDS {
+                        self.end_with_winner(self.compute_winner(), false);
+                    }
                 }
             }
             GameState::AfterGoal { time, .. } => {
@@ -435,6 +429,7 @@ impl Game {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn image(&self) -> AppResult<RgbaImage> {
         let mut img = PITCH_IMAGES
             .get(&self.palette)
@@ -1123,8 +1118,16 @@ mod test {
         let practice = Game::new_practice();
         assert!(practice.practice_mode);
         // The visible sprite set should be smaller in practice (no Blue player).
-        let practice_count = practice.visible_sprites().iter().filter(|s| s.is_some()).count();
-        let regular_count = regular.visible_sprites().iter().filter(|s| s.is_some()).count();
+        let practice_count = practice
+            .visible_sprites()
+            .iter()
+            .filter(|s| s.is_some())
+            .count();
+        let regular_count = regular
+            .visible_sprites()
+            .iter()
+            .filter(|s| s.is_some())
+            .count();
         assert!(practice_count < regular_count);
     }
 

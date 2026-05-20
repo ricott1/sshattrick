@@ -90,9 +90,15 @@ impl Tui {
         }
     }
 
-    pub fn draw(&mut self, game: &Game, image_lines: &[Line], viewer: GameSide) -> AppResult<()> {
+    pub fn draw(
+        &mut self,
+        game: &Game,
+        image_lines: &[Line],
+        viewer: GameSide,
+        idle_warning: Option<u32>,
+    ) -> AppResult<()> {
         self.terminal
-            .draw(|frame| ui::render(frame, game, image_lines, viewer))?;
+            .draw(|frame| ui::render(frame, game, image_lines, viewer, idle_warning))?;
         Ok(())
     }
 

@@ -6,6 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// Session-wide idle kick, covers both lobby and in-game phases.
+const APP_IDLE_KICK: Duration = Duration::from_secs(60);
+const APP_IDLE_WARNING: Duration = Duration::from_secs(10);
+
 pub struct SshattrickGame {
     tui_sender: mpsc::Sender<Tui>,
 }
@@ -40,7 +44,8 @@ impl SshGame for SshattrickGame {
             resize_rx,
             ..
         } = session;
-        let events = spawn_event_converter(data_rx, resize_rx);
+        let events =
+            spawn_event_converter(data_rx, resize_rx, Some(APP_IDLE_KICK), Some(APP_IDLE_WARNING));
         let tui = match Tui::new(username, writer, events) {
             Ok(t) => t,
             Err(e) => {

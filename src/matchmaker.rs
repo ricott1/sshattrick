@@ -1,7 +1,6 @@
 use crate::game::{Game, GameState};
 use crate::lobby::{
     generate_invite_code, FriendCodeState, LobbyStats, PendingPlayer, PlayerMode, FRIEND_CODE_LEN,
-    LOBBY_IDLE_KICK, LOBBY_IDLE_WARNING_REMAINING,
 };
 use crate::tui::Tui;
 use crate::types::{AppResult, GameSide};
@@ -59,7 +58,6 @@ async fn matchmaker(
                     }
                     pair_friend_codes(&mut players, &lobby_sender, &ongoing_games);
                     pair_auto_queue(&mut players, &lobby_sender, &ongoing_games);
-                    kick_idle_players(&mut players).await;
                 }
             }
             _ = draw_ticker.tick() => {
@@ -94,8 +92,14 @@ async fn process_lobby_events(players: &mut Vec<PendingPlayer>) {
                 TerminalEvent::Resize(_, _) => {
                     player.dirty = true;
                 }
+                TerminalEvent::IdleWarning(secs) => {
+                    player.idle_warning = Some(secs);
+                    player.dirty = true;
+                }
                 TerminalEvent::Key(key) => {
-                    player.last_input_at = Instant::now();
+                    if player.idle_warning.take().is_some() {
+                        player.dirty = true;
+                    }
                     let prev_discriminant = std::mem::discriminant(&player.mode);
 
                     if matches!(player.mode, PlayerMode::Idle) {
@@ -154,33 +158,6 @@ async fn process_lobby_events(players: &mut Vec<PendingPlayer>) {
                 }
                 _ => {}
             }
-        }
-    }
-    for i in to_remove.into_iter().rev() {
-        let player = players.remove(i);
-        player.tui.close().await;
-    }
-}
-
-async fn kick_idle_players(players: &mut Vec<PendingPlayer>) {
-    let now = Instant::now();
-    let mut to_remove = vec![];
-    for (i, player) in players.iter_mut().enumerate() {
-        if matches!(player.mode, PlayerMode::Practicing(_)) {
-            continue;
-        }
-        let elapsed = now.saturating_duration_since(player.last_input_at);
-        if elapsed >= LOBBY_IDLE_KICK {
-            log::info!(
-                "Kicking idle player {} after {}s",
-                player.tui.username(),
-                elapsed.as_secs()
-            );
-            to_remove.push(i);
-            continue;
-        }
-        if kick_warning_secs(player.last_input_at, now).is_some() {
-            player.dirty = true;
         }
     }
     for i in to_remove.into_iter().rev() {
@@ -277,24 +254,22 @@ fn pair_auto_queue(
 }
 
 async fn redraw_players(players: &mut [PendingPlayer], stats: &LobbyStats) {
-    let now = Instant::now();
     for player in players.iter_mut() {
         let PendingPlayer {
             tui,
             mode,
             dirty,
-            last_input_at,
+            idle_warning,
         } = player;
         let mut wrote = false;
         match mode {
             PlayerMode::Practicing(g) => {
                 if let Ok(lines) = g.render_lines() {
-                    let _ = tui.draw(g, &lines, GameSide::Red);
+                    let _ = tui.draw(g, &lines, GameSide::Red, *idle_warning);
                     wrote = true;
                 }
             }
             lobby_mode if *dirty => {
-                let warning = kick_warning_secs(*last_input_at, now);
                 let view = match lobby_mode {
                     PlayerMode::Idle => crate::lobby::LobbyView::Idle,
                     PlayerMode::AutoQueue => crate::lobby::LobbyView::AutoQueue,
@@ -305,7 +280,7 @@ async fn redraw_players(players: &mut [PendingPlayer], stats: &LobbyStats) {
                     },
                     PlayerMode::Practicing(_) => unreachable!(),
                 };
-                let _ = tui.draw_lobby(stats, view, warning);
+                let _ = tui.draw_lobby(stats, view, *idle_warning);
                 *dirty = false;
                 wrote = true;
             }
@@ -327,6 +302,8 @@ fn spawn_game(
     task::spawn(async move {
         let mut red = Some(red_tui);
         let mut blue = Some(blue_tui);
+        let mut red_warn: Option<u32> = None;
+        let mut blue_warn: Option<u32> = None;
         let mut game = Game::new();
         log::info!("Game {} spawned", game.id);
 
@@ -352,16 +329,16 @@ fn spawn_game(
                     }
                 }
                 _ = draw_ticker.tick() => {
-                    if let Err(e) = draw_and_push(&game, &mut red, &mut blue).await {
+                    if let Err(e) = draw_and_push(&game, &mut red, &mut blue, red_warn, blue_warn).await {
                         log::error!("Error rendering game: {e}");
                         break;
                     }
                 }
                 event = next_or_pending(&mut red) => {
-                    handle_event(&mut game, GameSide::Red, event, &mut red).await;
+                    handle_event(&mut game, GameSide::Red, event, &mut red, &mut red_warn).await;
                 }
                 event = next_or_pending(&mut blue) => {
-                    handle_event(&mut game, GameSide::Blue, event, &mut blue).await;
+                    handle_event(&mut game, GameSide::Blue, event, &mut blue, &mut blue_warn).await;
                 }
             }
         }
@@ -384,17 +361,19 @@ async fn draw_and_push(
     game: &Game,
     red: &mut Option<Tui>,
     blue: &mut Option<Tui>,
+    red_warn: Option<u32>,
+    blue_warn: Option<u32>,
 ) -> AppResult<()> {
     if red.is_none() && blue.is_none() {
         return Ok(());
     }
     let image_lines = game.render_lines()?;
-    for (slot, side) in [
-        (red.as_mut(), GameSide::Red),
-        (blue.as_mut(), GameSide::Blue),
+    for (slot, side, warn) in [
+        (red.as_mut(), GameSide::Red, red_warn),
+        (blue.as_mut(), GameSide::Blue, blue_warn),
     ] {
         if let Some(t) = slot {
-            t.draw(game, &image_lines, side)?;
+            t.draw(game, &image_lines, side, warn)?;
         }
     }
     match (red.as_mut(), blue.as_mut()) {
@@ -414,42 +393,36 @@ async fn handle_event(
     side: GameSide,
     event: TerminalEvent,
     own_tui: &mut Option<Tui>,
+    own_warn: &mut Option<u32>,
 ) {
     match event {
         TerminalEvent::Quit => {
             if let Some(tui) = own_tui.take() {
                 tui.close().await;
             }
+            *own_warn = None;
             if !matches!(game.state, GameState::Ending { .. }) {
                 game.end_with_winner(Some(side.opposite()), true);
             }
+        }
+        TerminalEvent::IdleWarning(secs) => {
+            *own_warn = Some(secs);
         }
         TerminalEvent::Key(crossterm::event::KeyEvent {
             code: KeyCode::Esc,
             ..
         }) => {
+            *own_warn = None;
             if !matches!(game.state, GameState::Ending { .. }) {
                 game.end_with_winner(Some(side.opposite()), true);
             }
         }
-        TerminalEvent::Key(key) => game.handle_key_events(side, key.code),
+        TerminalEvent::Key(key) => {
+            *own_warn = None;
+            game.handle_key_events(side, key.code);
+        }
         _ => {}
     }
-}
-
-/// Seconds remaining until inactivity kick, rounded up. `None` when outside
-/// the warning window or already past the kick deadline.
-fn kick_warning_secs(last_input_at: Instant, now: Instant) -> Option<u32> {
-    let elapsed = now.saturating_duration_since(last_input_at);
-    if elapsed >= LOBBY_IDLE_KICK {
-        return None;
-    }
-    let remaining = LOBBY_IDLE_KICK - elapsed;
-    if remaining >= LOBBY_IDLE_WARNING_REMAINING {
-        return None;
-    }
-    let secs = remaining.as_secs() as u32 + u32::from(remaining.subsec_nanos() > 0);
-    Some(secs)
 }
 
 async fn next_or_pending(tui: &mut Option<Tui>) -> TerminalEvent {
