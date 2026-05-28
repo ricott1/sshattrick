@@ -2,6 +2,13 @@
 name = "sshattrick-core"
 version = "0.1.0"
 edition = "2021"
+authors = ["Alessandro Ricottone <ricott2@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "Pure game logic and asset rendering for sshattrick - hockey in your terminal."
+readme = "README.md"
+repository = "https://github.com/ricott1/sshattrick"
+keywords = ["game", "hockey", "tui"]
+categories = ["games"]
 
 [dependencies]
 anyhow = "1.0.102"

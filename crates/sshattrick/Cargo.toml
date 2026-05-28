@@ -2,8 +2,10 @@
 name = "sshattrick"
 version = "0.2.0"
 edition = "2021"
+authors = ["Alessandro Ricottone <ricott2@gmail.com>"]
 description = "Hockey in your terminal over SSH."
 license = "GPL-3.0-only"
+homepage = "https://github.com/ricott1/sshattrick"
 repository = "https://github.com/ricott1/sshattrick"
 readme = "../../README.md"
 keywords = ["ssh", "game", "terminal", "ratatui", "multiplayer"]
