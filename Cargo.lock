@@ -1011,6 +1011,8 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 [[package]]
 name = "frittura-ssh-core"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b111e16f29d75e2f295d6f724d75951fa269f4e491553f8866d6c1b94c0729aa"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -2969,6 +2971,10 @@ dependencies = [
  "tokio",
  "uuid",
 ]
+
+[[package]]
+name = "sshattrick-core"
+version = "0.1.0"
 
 [[package]]
 name = "static_assertions"
