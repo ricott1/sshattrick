@@ -1,6 +1,3 @@
-use crate::constants::UI_SCREEN_SIZE;
-use crate::game::Game;
-use crate::types::{AppResult, GameSide};
 use crate::ui;
 use crossterm::cursor::Hide;
 use crossterm::event::EnableMouseCapture;
@@ -10,6 +7,8 @@ use ratatui::layout::Rect;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::text::Line;
 use ratatui::{Terminal, TerminalOptions, Viewport};
+use sshattrick_core::constants::UI_SCREEN_SIZE;
+use sshattrick_core::{AppResult, Game, GameSide};
 use tokio::sync::mpsc::Receiver;
 
 #[derive(Debug)]
@@ -84,9 +83,7 @@ impl Tui {
         match self.events.try_recv() {
             Ok(event) => Some(event),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
-            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                Some(TerminalEvent::Quit)
-            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Some(TerminalEvent::Quit),
         }
     }
 
@@ -136,6 +133,10 @@ impl Tui {
 
     /// Restore the terminal and close the SSH channel, awaited end-to-end.
     pub async fn close(mut self) {
-        self.terminal.backend_mut().writer_mut().send_and_close().await;
+        self.terminal
+            .backend_mut()
+            .writer_mut()
+            .send_and_close()
+            .await;
     }
 }

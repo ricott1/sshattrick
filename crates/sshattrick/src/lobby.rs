@@ -1,5 +1,5 @@
-use crate::game::Game;
 use crate::tui::Tui;
+use sshattrick_core::Game;
 
 pub const FRIEND_CODE_LEN: usize = 6;
 

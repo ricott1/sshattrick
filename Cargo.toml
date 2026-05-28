@@ -1,13 +1,6 @@
-[package]
-name = "sshattrick"
-version = "0.2.0"
-edition = "2021"
-description = "Hockey in your terminal over SSH."
-license = "GPL-3.0-only"
-repository = "https://github.com/ricott1/sshattrick"
-readme = "README.md"
-keywords = ["ssh", "game", "terminal", "ratatui", "multiplayer"]
-categories = ["games", "command-line-utilities"]
+[workspace]
+members = ["crates/sshattrick-core", "crates/sshattrick"]
+resolver = "2"
 
 [profile.release]
 strip = true
@@ -15,20 +8,3 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-
-[dependencies]
-anyhow = "1.0.102"
-clap = { version = "4.6.1", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-crossterm = { version = "0.29", default-features = false, features = ["events"] }
-directories = "6.0.0"
-glam = "0.32.1"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
-include_dir = "0.7.4"
-itertools = { version = "0.14.0", default-features = false, features = ["use_std"] }
-log = "0.4.27"
-log4rs = { version = "1.4.0", default-features = false, features = ["file_appender", "pattern_encoder"] }
-rand = { version = "0.10.1", default-features = false, features = ["std", "std_rng", "thread_rng"] }
-ratatui = { version = "0.30.0", features = ["unstable-backend-writer"] }
-frittura-ssh-core = "0.2.0"
-tokio = { version = "1.52.1", default-features = false, features = ["rt-multi-thread", "time", "macros", "sync"] }
-uuid = { version = "1.23.1", default-features = false, features = ["v4", "fast-rng"] }

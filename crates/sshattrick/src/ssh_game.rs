@@ -1,7 +1,7 @@
-use crate::constants::UI_SCREEN_SIZE;
 use crate::matchmaker;
 use crate::tui::Tui;
 use frittura_ssh_core::{spawn_event_converter, Credential, SshGame, SshSession};
+use sshattrick_core::constants::UI_SCREEN_SIZE;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -44,8 +44,12 @@ impl SshGame for SshattrickGame {
             resize_rx,
             ..
         } = session;
-        let events =
-            spawn_event_converter(data_rx, resize_rx, Some(APP_IDLE_KICK), Some(APP_IDLE_WARNING));
+        let events = spawn_event_converter(
+            data_rx,
+            resize_rx,
+            Some(APP_IDLE_KICK),
+            Some(APP_IDLE_WARNING),
+        );
         let tui = match Tui::new(username, writer, events) {
             Ok(t) => t,
             Err(e) => {

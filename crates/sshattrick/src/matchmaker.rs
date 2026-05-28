@@ -1,11 +1,21 @@
-use crate::game::{Game, GameState};
 use crate::lobby::{
     generate_invite_code, FriendCodeState, LobbyStats, PendingPlayer, PlayerMode, FRIEND_CODE_LEN,
 };
 use crate::tui::Tui;
-use crate::types::{AppResult, GameSide};
 use crossterm::event::KeyCode;
 use frittura_ssh_core::TerminalEvent;
+use sshattrick_core::{AppResult, Game, GameCommand, GameSide, GameState};
+
+fn key_code_to_game_command(code: KeyCode) -> Option<GameCommand> {
+    match code {
+        KeyCode::Up => Some(GameCommand::Up),
+        KeyCode::Down => Some(GameCommand::Down),
+        KeyCode::Left => Some(GameCommand::Left),
+        KeyCode::Right => Some(GameCommand::Right),
+        KeyCode::Char(' ') => Some(GameCommand::Shoot),
+        _ => None,
+    }
+}
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -111,9 +121,8 @@ async fn process_lobby_events(players: &mut Vec<PendingPlayer>) {
                             }
                             KeyCode::Char('a') => player.mode = PlayerMode::AutoQueue,
                             KeyCode::Char('p') => {
-                                player.mode = PlayerMode::Practicing(Box::new(
-                                    Game::new_practice(),
-                                ));
+                                player.mode =
+                                    PlayerMode::Practicing(Box::new(Game::new_practice()));
                             }
                             KeyCode::Char('g') => {
                                 player.mode = PlayerMode::ShowingCode(Box::new(
@@ -149,7 +158,9 @@ async fn process_lobby_events(players: &mut Vec<PendingPlayer>) {
                     } else if matches!(key.code, KeyCode::Esc | KeyCode::Backspace) {
                         player.mode = PlayerMode::Idle;
                     } else if let PlayerMode::Practicing(g) = &mut player.mode {
-                        g.handle_key_events(GameSide::Red, key.code);
+                        if let Some(cmd) = key_code_to_game_command(key.code) {
+                            g.handle_command(GameSide::Red, cmd);
+                        }
                     }
 
                     if prev_discriminant != std::mem::discriminant(&player.mode) {
@@ -264,7 +275,8 @@ async fn redraw_players(players: &mut [PendingPlayer], stats: &LobbyStats) {
         let mut wrote = false;
         match mode {
             PlayerMode::Practicing(g) => {
-                if let Ok(lines) = g.render_lines() {
+                if let Ok(img) = g.draw() {
+                    let lines = crate::img_lines::img_to_lines(&img);
                     let _ = tui.draw(g, &lines, GameSide::Red, *idle_warning);
                     wrote = true;
                 }
@@ -367,7 +379,8 @@ async fn draw_and_push(
     if red.is_none() && blue.is_none() {
         return Ok(());
     }
-    let image_lines = game.render_lines()?;
+    let image = game.draw()?;
+    let image_lines = crate::img_lines::img_to_lines(&image);
     for (slot, side, warn) in [
         (red.as_mut(), GameSide::Red, red_warn),
         (blue.as_mut(), GameSide::Blue, blue_warn),
@@ -409,8 +422,7 @@ async fn handle_event(
             *own_warn = Some(secs);
         }
         TerminalEvent::Key(crossterm::event::KeyEvent {
-            code: KeyCode::Esc,
-            ..
+            code: KeyCode::Esc, ..
         }) => {
             *own_warn = None;
             if !matches!(game.state, GameState::Ending { .. }) {
@@ -419,7 +431,9 @@ async fn handle_event(
         }
         TerminalEvent::Key(key) => {
             *own_warn = None;
-            game.handle_key_events(side, key.code);
+            if let Some(cmd) = key_code_to_game_command(key.code) {
+                game.handle_command(side, cmd);
+            }
         }
         _ => {}
     }
