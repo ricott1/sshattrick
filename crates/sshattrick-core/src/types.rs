@@ -102,4 +102,3 @@ impl From<usize> for Orientation {
         }
     }
 }
-

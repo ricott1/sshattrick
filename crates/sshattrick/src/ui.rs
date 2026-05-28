@@ -4,8 +4,6 @@ use crate::big_text::{
 };
 use crate::img_lines::PITCH_LINES;
 use crate::lobby::{LobbyStats, LobbyView, FRIEND_CODE_LEN};
-use sshattrick_core::constants::*;
-use sshattrick_core::{Game, GameData, GameSide, GameState, Palette};
 use ratatui::{
     layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Style},
@@ -13,6 +11,8 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph},
     Frame,
 };
+use sshattrick_core::constants::*;
+use sshattrick_core::{Game, GameData, GameSide, GameState, Palette};
 
 const CONTROLS_LINES: [&str; 3] = [
     "← ↑ → ↓: move",

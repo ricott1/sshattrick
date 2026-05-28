@@ -1,3 +1,4 @@
+use crate::geom::Rect;
 use crate::{
     constants::*,
     traits::{Body, Entity, HitBox, Sprite},
@@ -6,7 +7,6 @@ use crate::{
 };
 use glam::{I16Vec2, U16Vec2, Vec2};
 use image::RgbaImage;
-use crate::geom::Rect;
 
 #[derive(Debug, Default)]
 pub struct ShootingState {
@@ -237,9 +237,8 @@ impl Player {
         } else if (self.position.x as u16 + self.size().x) > rect.right() {
             let extra_distance = self.position.x + self.size().x as f32 - rect.right() as f32;
             let bounced_distance = extra_distance * bouncing_coefficient;
-            self.position.x = ((rect.right().saturating_sub(self.size().x)) as f32
-                - bounced_distance)
-                .max(0.0);
+            self.position.x =
+                ((rect.right().saturating_sub(self.size().x)) as f32 - bounced_distance).max(0.0);
             self.velocity.x *= -bouncing_coefficient;
         }
 
@@ -251,8 +250,7 @@ impl Player {
         } else if (self.position.y as u16 + self.size().y) > rect.bottom() {
             let extra_distance = self.position.y + self.size().y as f32 - rect.bottom() as f32;
             let bounced_distance = extra_distance * bouncing_coefficient;
-            self.position.y =
-                ((rect.bottom() - self.size().y) as f32 - bounced_distance).max(0.0);
+            self.position.y = ((rect.bottom() - self.size().y) as f32 - bounced_distance).max(0.0);
             self.velocity.y *= -bouncing_coefficient;
         }
     }

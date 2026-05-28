@@ -121,9 +121,8 @@ async fn process_lobby_events(players: &mut Vec<PendingPlayer>) {
                             }
                             KeyCode::Char('a') => player.mode = PlayerMode::AutoQueue,
                             KeyCode::Char('p') => {
-                                player.mode = PlayerMode::Practicing(Box::new(
-                                    Game::new_practice(),
-                                ));
+                                player.mode =
+                                    PlayerMode::Practicing(Box::new(Game::new_practice()));
                             }
                             KeyCode::Char('g') => {
                                 player.mode = PlayerMode::ShowingCode(Box::new(
@@ -423,8 +422,7 @@ async fn handle_event(
             *own_warn = Some(secs);
         }
         TerminalEvent::Key(crossterm::event::KeyEvent {
-            code: KeyCode::Esc,
-            ..
+            code: KeyCode::Esc, ..
         }) => {
             *own_warn = None;
             if !matches!(game.state, GameState::Ending { .. }) {

@@ -162,10 +162,22 @@ pub static GOALIE_IMAGE_DATA: LazyLock<HashMap<GameSide, ImageData>> = LazyLock:
 
 pub static PUCKS_IMAGE_DATA: LazyLock<HashMap<Palette, ImageData>> = LazyLock::new(|| {
     HashMap::from([
-        (Palette::Dark, load_single("puck_white.png", ColliderType::Puck)),
-        (Palette::Light, load_single("puck_black.png", ColliderType::Puck)),
-        (Palette::Basket, load_single("puck_white.png", ColliderType::Puck)),
-        (Palette::Alt, load_single("puck_gold.png", ColliderType::Puck)),
+        (
+            Palette::Dark,
+            load_single("puck_white.png", ColliderType::Puck),
+        ),
+        (
+            Palette::Light,
+            load_single("puck_black.png", ColliderType::Puck),
+        ),
+        (
+            Palette::Basket,
+            load_single("puck_white.png", ColliderType::Puck),
+        ),
+        (
+            Palette::Alt,
+            load_single("puck_gold.png", ColliderType::Puck),
+        ),
     ])
 });
 
@@ -177,4 +189,3 @@ pub static PITCH_IMAGES: LazyLock<HashMap<Palette, RgbaImage>> = LazyLock::new(|
         (Palette::Alt, load_image("pitch_alt.png")),
     ])
 });
-

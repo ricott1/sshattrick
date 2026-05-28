@@ -479,7 +479,6 @@ impl Game {
             Some((&self.puck as &dyn Sprite, self.puck.position())),
         ]
     }
-
 }
 
 /// Detect a catch that happened while the player was rotating this tick by
