@@ -6,7 +6,7 @@ use log4rs::{
     encode::pattern::PatternEncoder,
     Config,
 };
-use sshattrick::{ssh::AppServer, store_path, AppResult};
+use sshattrick::{store_path, AppResult, SshattrickGame};
 
 const DEFAULT_PORT: u16 = 3020;
 
@@ -32,8 +32,8 @@ async fn main() -> AppResult<()> {
     log4rs::init_config(config)?;
 
     let port = Args::parse().port.unwrap_or(DEFAULT_PORT);
-    let mut game_server = AppServer::new(port);
-    game_server.run().await?;
+    let game = SshattrickGame::new();
+    frittura_ssh_core::run_server(game, port).await?;
 
     Ok(())
 }

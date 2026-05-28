@@ -1,8 +1,16 @@
-use crossterm::event::{KeyEvent, MouseEvent};
 use glam::Vec2;
 use image::Rgba;
 
 pub type AppResult<T> = Result<T, anyhow::Error>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GameCommand {
+    Up,
+    Down,
+    Left,
+    Right,
+    Shoot,
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GameSide {
@@ -93,12 +101,4 @@ impl From<usize> for Orientation {
             _ => panic!("Invalid orientation"),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum TerminalEvent {
-    Key(KeyEvent),
-    Mouse(MouseEvent),
-    Resize(u16, u16),
-    Quit,
 }

@@ -1,5 +1,5 @@
+use crate::geom::{Margin, Rect};
 use glam::Vec2;
-use ratatui::layout::{Margin, Rect};
 
 pub const UI_SCREEN_SIZE: (u16, u16) = (160, 50);
 

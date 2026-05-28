@@ -1,3 +1,4 @@
+use crate::geom::Rect;
 use crate::{
     constants::*,
     traits::{Body, Entity, HitBox, Sprite},
@@ -6,9 +7,6 @@ use crate::{
 };
 use glam::{I16Vec2, U16Vec2, Vec2};
 use image::RgbaImage;
-use ratatui::layout::Rect;
-
-use super::utils::RectSide;
 
 #[derive(Debug, Default)]
 pub struct ShootingState {
@@ -230,88 +228,30 @@ impl Player {
         U16Vec2::new(x, y)
     }
 
-    pub fn maybe_bounce_against_rect(
-        &mut self,
-        rect: Rect,
-        bouncing_coefficient: f32,
-        side: RectSide,
-    ) {
-        match side {
-            // Entity cannot get outside of the rect
-            RectSide::Inside => {
-                if (self.position.x as u16) < rect.left() {
-                    let extra_distance = rect.left() as f32 - self.position.x;
-                    let bounced_distance = extra_distance * bouncing_coefficient;
-                    self.position.x = rect.left() as f32 + bounced_distance;
-                    self.velocity.x *= -bouncing_coefficient;
-                } else if (self.position.x as u16 + self.size().x) > rect.right() {
-                    let extra_distance =
-                        self.position.x + self.size().x as f32 - rect.right() as f32;
-                    let bounced_distance = extra_distance * bouncing_coefficient;
-                    self.position.x = ((rect.right().saturating_sub(self.size().x)) as f32
-                        - bounced_distance)
-                        .max(0.0);
-                    self.velocity.x *= -bouncing_coefficient;
-                }
+    pub fn maybe_bounce_against_rect(&mut self, rect: Rect, bouncing_coefficient: f32) {
+        if (self.position.x as u16) < rect.left() {
+            let extra_distance = rect.left() as f32 - self.position.x;
+            let bounced_distance = extra_distance * bouncing_coefficient;
+            self.position.x = rect.left() as f32 + bounced_distance;
+            self.velocity.x *= -bouncing_coefficient;
+        } else if (self.position.x as u16 + self.size().x) > rect.right() {
+            let extra_distance = self.position.x + self.size().x as f32 - rect.right() as f32;
+            let bounced_distance = extra_distance * bouncing_coefficient;
+            self.position.x =
+                ((rect.right().saturating_sub(self.size().x)) as f32 - bounced_distance).max(0.0);
+            self.velocity.x *= -bouncing_coefficient;
+        }
 
-                if (self.position.y as u16) < rect.top() {
-                    let extra_distance = rect.top() as f32 - self.position.y;
-                    let bounced_distance = extra_distance * bouncing_coefficient;
-                    self.position.y = rect.top() as f32 + bounced_distance;
-                    self.velocity.y *= -bouncing_coefficient;
-                } else if (self.position.y as u16 + self.size().y) > rect.bottom() {
-                    let extra_distance =
-                        self.position.y + self.size().y as f32 - rect.bottom() as f32;
-                    let bounced_distance = extra_distance * bouncing_coefficient;
-                    self.position.y =
-                        ((rect.bottom() - self.size().y) as f32 - bounced_distance).max(0.0);
-                    self.velocity.y *= -bouncing_coefficient;
-                }
-            }
-            // Entity cannot get inside of the rect
-            RectSide::Outside => {
-                {
-                    // Went in from north
-                    if self.previous_rect().bottom() < rect.top()
-                        && self.rect().bottom() >= rect.top()
-                    {
-                        let extra_distance = self.rect().bottom() as f32 - rect.top() as f32;
-                        let bounced_distance = extra_distance * bouncing_coefficient;
-                        self.position.y =
-                            ((rect.top() - self.size().y) as f32 - bounced_distance).max(0.0);
-                        self.velocity.y *= -bouncing_coefficient;
-                    }
-                    // Went in from south
-                    else if self.previous_rect().top() > rect.bottom()
-                        && self.rect().top() <= rect.bottom()
-                    {
-                        let extra_distance = self.rect().top() as f32 - rect.bottom() as f32;
-                        let bounced_distance = extra_distance * bouncing_coefficient;
-                        self.position.y = rect.bottom() as f32 + bounced_distance;
-                        self.velocity.y *= -bouncing_coefficient;
-                    }
-
-                    // Went in from west
-                    if self.previous_rect().right() < rect.left()
-                        && self.rect().right() >= rect.left()
-                    {
-                        let extra_distance = self.rect().right() as f32 - rect.left() as f32;
-                        let bounced_distance = extra_distance * bouncing_coefficient;
-                        self.position.x =
-                            ((rect.left() - self.size().x) as f32 - bounced_distance).max(0.0);
-                        self.velocity.x *= -bouncing_coefficient;
-                    }
-                    // Went in from east
-                    else if self.previous_rect().left() > rect.right()
-                        && self.rect().left() <= rect.right()
-                    {
-                        let extra_distance = self.rect().left() as f32 - rect.right() as f32;
-                        let bounced_distance = extra_distance * bouncing_coefficient;
-                        self.position.x = rect.right() as f32 + bounced_distance;
-                        self.velocity.x *= -bouncing_coefficient;
-                    }
-                }
-            }
+        if (self.position.y as u16) < rect.top() {
+            let extra_distance = rect.top() as f32 - self.position.y;
+            let bounced_distance = extra_distance * bouncing_coefficient;
+            self.position.y = rect.top() as f32 + bounced_distance;
+            self.velocity.y *= -bouncing_coefficient;
+        } else if (self.position.y as u16 + self.size().y) > rect.bottom() {
+            let extra_distance = self.position.y + self.size().y as f32 - rect.bottom() as f32;
+            let bounced_distance = extra_distance * bouncing_coefficient;
+            self.position.y = ((rect.bottom() - self.size().y) as f32 - bounced_distance).max(0.0);
+            self.velocity.y *= -bouncing_coefficient;
         }
     }
 }

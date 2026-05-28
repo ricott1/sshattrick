@@ -1,15 +1,14 @@
-use crate::constants::UI_SCREEN_SIZE;
-use crate::game::Game;
-use crate::ssh::SSHWriterProxy;
-use crate::types::{AppResult, GameSide, TerminalEvent};
 use crate::ui;
-use crossterm::cursor::{Hide, Show};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, SetTitle};
+use crossterm::cursor::Hide;
+use crossterm::event::EnableMouseCapture;
+use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, SetTitle};
+use frittura_ssh_core::{SshWriterProxy, TerminalEvent};
 use ratatui::layout::Rect;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::text::Line;
 use ratatui::{Terminal, TerminalOptions, Viewport};
+use sshattrick_core::constants::UI_SCREEN_SIZE;
+use sshattrick_core::{AppResult, Game, GameSide};
 use tokio::sync::mpsc::Receiver;
 
 #[derive(Debug)]
@@ -17,14 +16,14 @@ pub struct Tui {
     username: String,
     games_played: usize,
     games_won: usize,
-    terminal: Terminal<CrosstermBackend<SSHWriterProxy>>,
+    terminal: Terminal<CrosstermBackend<SshWriterProxy>>,
     events: Receiver<TerminalEvent>,
 }
 
 impl Tui {
     pub fn new(
         username: String,
-        writer: SSHWriterProxy,
+        writer: SshWriterProxy,
         events: Receiver<TerminalEvent>,
     ) -> AppResult<Self> {
         let backend = CrosstermBackend::new(writer);
@@ -84,15 +83,19 @@ impl Tui {
         match self.events.try_recv() {
             Ok(event) => Some(event),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
-            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                Some(TerminalEvent::Quit)
-            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Some(TerminalEvent::Quit),
         }
     }
 
-    pub fn draw(&mut self, game: &Game, image_lines: &[Line], viewer: GameSide) -> AppResult<()> {
+    pub fn draw(
+        &mut self,
+        game: &Game,
+        image_lines: &[Line],
+        viewer: GameSide,
+        idle_warning: Option<u32>,
+    ) -> AppResult<()> {
         self.terminal
-            .draw(|frame| ui::render(frame, game, image_lines, viewer))?;
+            .draw(|frame| ui::render(frame, game, image_lines, viewer, idle_warning))?;
         Ok(())
     }
 
@@ -127,18 +130,13 @@ impl Tui {
         self.terminal.backend_mut().writer_mut().send().await?;
         Ok(())
     }
-}
 
-impl Drop for Tui {
-    fn drop(&mut self) {
-        let backend = self.terminal.backend_mut();
-        let _ = crossterm::execute!(
-            backend,
-            LeaveAlternateScreen,
-            DisableMouseCapture,
-            Clear(ClearType::All),
-            Show
-        );
-        backend.writer_mut().send_in_background();
+    /// Restore the terminal and close the SSH channel, awaited end-to-end.
+    pub async fn close(mut self) {
+        self.terminal
+            .backend_mut()
+            .writer_mut()
+            .send_and_close()
+            .await;
     }
 }

@@ -2,12 +2,11 @@ use super::engine::{goalie::Goalie, player::Player, puck::Puck};
 use crate::{
     collision_detection::{are_colliding, inelastic_collision},
     constants::*,
-    engine::{area::Area, utils::RectSide},
+    engine::area::Area,
     traits::{Body, ColliderType, Entity, Sprite},
     types::*,
     utils::*,
 };
-use crossterm::event::KeyCode;
 use glam::{U16Vec2, Vec2};
 use image::RgbaImage;
 use std::collections::VecDeque;
@@ -52,23 +51,24 @@ impl GameData {
         self.player.reset();
     }
 
-    pub fn handle_key_events(&mut self, puck: &mut Puck, key_code: KeyCode) {
+    pub fn handle_command(&mut self, puck: &mut Puck, cmd: GameCommand) {
         let player = &mut self.player;
         if player.shooting_state.is_shooting() {
-            let shooting_modifier = match key_code {
-                KeyCode::Up => Vec2::NEG_Y * SHOOTING_DIRECTION_MODIFIER,
-                KeyCode::Down => Vec2::Y * SHOOTING_DIRECTION_MODIFIER,
-                KeyCode::Left => Vec2::NEG_X * SHOOTING_DIRECTION_MODIFIER,
-                KeyCode::Right => Vec2::X * SHOOTING_DIRECTION_MODIFIER,
-                _ => Vec2::ZERO,
+            let shooting_modifier = match cmd {
+                GameCommand::Up => Vec2::NEG_Y * SHOOTING_DIRECTION_MODIFIER,
+                GameCommand::Down => Vec2::Y * SHOOTING_DIRECTION_MODIFIER,
+                GameCommand::Left => Vec2::NEG_X * SHOOTING_DIRECTION_MODIFIER,
+                GameCommand::Right => Vec2::X * SHOOTING_DIRECTION_MODIFIER,
+                GameCommand::Shoot => Vec2::ZERO,
             };
             let current = player.shooting_state.direction.unwrap_or(player.velocity);
-            player.shooting_state.direction =
-                Some((current + shooting_modifier).clamp_length_max(SHOOTING_DIRECTION_MAX_MAGNITUDE));
+            player.shooting_state.direction = Some(
+                (current + shooting_modifier).clamp_length_max(SHOOTING_DIRECTION_MAX_MAGNITUDE),
+            );
             return;
         }
 
-        if key_code == KeyCode::Char(' ') && player.after_shooting_counter == 0.0 {
+        if cmd == GameCommand::Shoot && player.after_shooting_counter == 0.0 {
             if puck.possession == Some(player.side) {
                 player.velocity *= SHOOTING_VELOCITY_DAMPING;
                 puck.velocity *= SHOOTING_VELOCITY_DAMPING;
@@ -80,24 +80,24 @@ impl GameData {
             return;
         }
 
-        let natural_orientation = match key_code {
-            KeyCode::Up => {
+        let natural_orientation = match cmd {
+            GameCommand::Up => {
                 apply_axis_input(&mut player.velocity.y, -1.0);
                 Orientation::UpLeft
             }
-            KeyCode::Down => {
+            GameCommand::Down => {
                 apply_axis_input(&mut player.velocity.y, 1.0);
                 Orientation::DownRight
             }
-            KeyCode::Left => {
+            GameCommand::Left => {
                 apply_axis_input(&mut player.velocity.x, -1.0);
                 Orientation::DownLeft
             }
-            KeyCode::Right => {
+            GameCommand::Right => {
                 apply_axis_input(&mut player.velocity.x, 1.0);
                 Orientation::UpRight
             }
-            _ => player.orientation,
+            GameCommand::Shoot => player.orientation,
         };
 
         if player.velocity.length() > 0.0 && player.orientation != natural_orientation {
@@ -179,21 +179,10 @@ impl Game {
         self.skate_traces.clear();
     }
 
-    pub fn reset(&mut self) {
-        self.reset_after_goal();
-        self.red_data.score = 0;
-        self.blue_data.score = 0;
-        self.timer = 0;
-    }
-
     fn update_running(&mut self, deltatime: f32) -> AppResult<()> {
         for player in [&mut self.red_data.player, &mut self.blue_data.player] {
             player.update(deltatime);
-            player.maybe_bounce_against_rect(
-                PITCH_INNER_RECT,
-                COFFICIENT_OF_WALL_BOUNCING,
-                RectSide::Inside,
-            );
+            player.maybe_bounce_against_rect(PITCH_INNER_RECT, COFFICIENT_OF_WALL_BOUNCING);
 
             if are_colliding(player, &self.red_data.area).is_some() {
                 inelastic_collision(player, &mut self.red_data.area, AREA_RESTITUTION);
@@ -275,7 +264,9 @@ impl Game {
         if self.practice_mode {
             self.blue_data.goalie.random_walk(deltatime);
         } else {
-            self.blue_data.goalie.align_to_player(&self.blue_data.player);
+            self.blue_data
+                .goalie
+                .align_to_player(&self.blue_data.player);
         }
 
         self.puck.update(deltatime);
@@ -375,12 +366,12 @@ impl Game {
         }
     }
 
-    pub fn handle_key_events(&mut self, side: GameSide, key_code: KeyCode) {
+    pub fn handle_command(&mut self, side: GameSide, cmd: GameCommand) {
         let data = match side {
             GameSide::Red => &mut self.red_data,
             GameSide::Blue => &mut self.blue_data,
         };
-        data.handle_key_events(&mut self.puck, key_code);
+        data.handle_command(&mut self.puck, cmd);
     }
 
     fn compute_winner(&self) -> Option<GameSide> {
@@ -418,9 +409,11 @@ impl Game {
             }
             GameState::Running => {
                 self.update_running(deltatime)?;
-                self.timer += deltatime as u128;
-                if self.timer > Self::DURATION_MILLISECONDS {
-                    self.end_with_winner(self.compute_winner(), false);
+                if !self.practice_mode {
+                    self.timer += deltatime as u128;
+                    if self.timer > Self::DURATION_MILLISECONDS {
+                        self.end_with_winner(self.compute_winner(), false);
+                    }
                 }
             }
             GameState::AfterGoal { time, .. } => {
@@ -435,7 +428,7 @@ impl Game {
         Ok(())
     }
 
-    pub fn image(&self) -> AppResult<RgbaImage> {
+    pub fn draw(&self) -> AppResult<RgbaImage> {
         let mut img = PITCH_IMAGES
             .get(&self.palette)
             .expect("Pitch image should exist")
@@ -444,8 +437,6 @@ impl Game {
         Ok(img)
     }
 
-    /// Blit skate traces and sprite pixels onto `img` (caller supplies the pitch
-    /// already loaded in). Shared between `image()` and `render_lines()`.
     fn composite_dynamic(&self, img: &mut RgbaImage) -> AppResult<()> {
         for trace in &self.skate_traces {
             img.put_pixel(
@@ -488,38 +479,6 @@ impl Game {
             Some((&self.puck as &dyn Sprite, self.puck.position())),
         ]
     }
-
-    /// Build the per-frame `Vec<Line>` shown in the TUI. Starts from the
-    /// statically pre-rendered pitch lines and only re-rasterises the cells
-    /// actually touched by sprites and skate traces.
-    pub fn render_lines(&self) -> AppResult<Vec<ratatui::text::Line<'static>>> {
-        let mut lines = PITCH_LINES
-            .get(&self.palette)
-            .expect("Pitch lines should exist")
-            .clone();
-
-        let mut composed = PITCH_IMAGES
-            .get(&self.palette)
-            .expect("Pitch image should exist")
-            .clone();
-        self.composite_dynamic(&mut composed)?;
-
-        for (sprite, pos) in self.visible_sprites().into_iter().flatten() {
-            let size = sprite.size();
-            let cy_start = pos.y / 2;
-            let cy_end = (pos.y + size.y).div_ceil(2);
-            let cx_start = pos.x;
-            let cx_end = pos.x + size.x;
-            rerender_cells(&mut lines, &composed, cx_start..cx_end, cy_start..cy_end);
-        }
-
-        for trace in &self.skate_traces {
-            let cy = trace.y / 2;
-            rerender_cells(&mut lines, &composed, trace.x..(trace.x + 1), cy..(cy + 1));
-        }
-
-        Ok(lines)
-    }
 }
 
 /// Detect a catch that happened while the player was rotating this tick by
@@ -556,7 +515,7 @@ mod test {
     use crate::traits::ColliderType;
     use core::time;
     use glam::{I16Vec2, U16Vec2};
-    use image::Rgba;
+    use image::{Pixel, Rgba};
     use log::LevelFilter;
     use log4rs::append::file::FileAppender;
     use log4rs::config::{Appender, Root};
@@ -564,8 +523,43 @@ mod test {
     use log4rs::Config;
     use ratatui::backend::CrosstermBackend;
     use ratatui::layout::{Constraint, Layout};
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
     use ratatui::widgets::Paragraph;
     use ratatui::Terminal;
+
+    fn img_to_lines<'a>(img: &RgbaImage) -> Vec<Line<'a>> {
+        let mut lines: Vec<Line> = vec![];
+        let width = img.width();
+        let height = img.height();
+        for y in (0..height - 1).step_by(2) {
+            let mut line: Vec<Span> = vec![];
+            for x in 0..width {
+                let top = img.get_pixel(x, y).to_rgba();
+                let btm = img.get_pixel(x, y + 1).to_rgba();
+                if top[3] == 0 && btm[3] == 0 {
+                    line.push(Span::raw(" "));
+                } else if top[3] > 0 && btm[3] == 0 {
+                    let [r, g, b, _] = top.0;
+                    line.push(Span::styled("▀", Style::default().fg(Color::Rgb(r, g, b))));
+                } else if top[3] == 0 && btm[3] > 0 {
+                    let [r, g, b, _] = btm.0;
+                    line.push(Span::styled("▄", Style::default().fg(Color::Rgb(r, g, b))));
+                } else {
+                    let [fr, fg, fb, _] = top.0;
+                    let [br, bg, bb, _] = btm.0;
+                    line.push(Span::styled(
+                        "▀",
+                        Style::default()
+                            .fg(Color::Rgb(fr, fg, fb))
+                            .bg(Color::Rgb(br, bg, bb)),
+                    ));
+                }
+            }
+            lines.push(Line::from(line));
+        }
+        lines
+    }
 
     fn init() -> AppResult<()> {
         let logfile_path = store_path("sshattrick.log")?;
@@ -824,7 +818,7 @@ mod test {
             terminal.draw(|frame| {
                 let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
                     .split(frame.area());
-                let image = game.image().expect("update error");
+                let image = game.draw().expect("update error");
                 let paragraph = Paragraph::new(img_to_lines(&image));
                 frame.render_widget(paragraph, split[1]);
             })?;
@@ -840,7 +834,7 @@ mod test {
             terminal.draw(|frame| {
                 let split = Layout::vertical([Constraint::Length(5), Constraint::Min(1)])
                     .split(frame.area());
-                let image = game.image().expect("update error");
+                let image = game.draw().expect("update error");
                 let paragraph = Paragraph::new(img_to_lines(&image));
                 frame.render_widget(paragraph, split[1]);
             })?;
@@ -1007,7 +1001,7 @@ mod test {
                     frame.render_widget(paragraph, split[0]);
                 }
 
-                let mut image = game.image().expect("update error");
+                let mut image = game.draw().expect("update error");
 
                 for (point, collider_type) in player.hit_box().iter() {
                     let img_point = player.position() + point;
@@ -1123,8 +1117,16 @@ mod test {
         let practice = Game::new_practice();
         assert!(practice.practice_mode);
         // The visible sprite set should be smaller in practice (no Blue player).
-        let practice_count = practice.visible_sprites().iter().filter(|s| s.is_some()).count();
-        let regular_count = regular.visible_sprites().iter().filter(|s| s.is_some()).count();
+        let practice_count = practice
+            .visible_sprites()
+            .iter()
+            .filter(|s| s.is_some())
+            .count();
+        let regular_count = regular
+            .visible_sprites()
+            .iter()
+            .filter(|s| s.is_some())
+            .count();
         assert!(practice_count < regular_count);
     }
 

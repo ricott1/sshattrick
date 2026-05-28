@@ -1,7 +1,7 @@
+use crate::geom::Rect;
 use crate::types::Palette;
 use glam::{U16Vec2, Vec2};
 use image::RgbaImage;
-use ratatui::layout::Rect;
 use std::{
     collections::{hash_map::Iter, HashMap},
     fmt::Debug,
@@ -60,14 +60,6 @@ pub enum ColliderType {
 
 pub trait Body: Sprite {
     fn mass(&self) -> f32;
-    fn previous_rect(&self) -> Rect {
-        Rect {
-            x: self.previous_position().x,
-            y: self.previous_position().y,
-            width: self.hit_box().size.x,
-            height: self.hit_box().size.y,
-        }
-    }
 
     fn rect(&self) -> Rect {
         Rect {
