@@ -6,7 +6,7 @@ use crate::{
 };
 use glam::{I16Vec2, U16Vec2, Vec2};
 use image::RgbaImage;
-use ratatui::layout::Rect;
+use crate::geom::Rect;
 
 #[derive(Debug, Default)]
 pub struct ShootingState {

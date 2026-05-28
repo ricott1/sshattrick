@@ -1,7 +1,6 @@
-use crate::constants::UI_SCREEN_SIZE;
-use crate::game::Game;
-use crate::types::{AppResult, GameSide};
 use crate::ui;
+use sshattrick_core::constants::UI_SCREEN_SIZE;
+use sshattrick_core::{AppResult, Game, GameSide};
 use crossterm::cursor::Hide;
 use crossterm::event::EnableMouseCapture;
 use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, SetTitle};

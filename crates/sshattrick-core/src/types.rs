@@ -3,6 +3,15 @@ use image::Rgba;
 
 pub type AppResult<T> = Result<T, anyhow::Error>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GameCommand {
+    Up,
+    Down,
+    Left,
+    Right,
+    Shoot,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GameSide {
     #[default]

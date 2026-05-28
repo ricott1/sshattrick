@@ -2958,23 +2958,32 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
- "directories",
  "frittura-ssh-core",
- "glam",
  "image",
- "include_dir",
- "itertools",
  "log",
  "log4rs",
  "rand 0.10.1",
  "ratatui",
+ "sshattrick-core",
  "tokio",
- "uuid",
 ]
 
 [[package]]
 name = "sshattrick-core"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "directories",
+ "glam",
+ "image",
+ "include_dir",
+ "log",
+ "log4rs",
+ "rand 0.10.1",
+ "ratatui",
+ "uuid",
+]
 
 [[package]]
 name = "static_assertions"

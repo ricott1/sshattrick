@@ -1,6 +1,6 @@
-use crate::constants::UI_SCREEN_SIZE;
 use crate::matchmaker;
 use crate::tui::Tui;
+use sshattrick_core::constants::UI_SCREEN_SIZE;
 use frittura_ssh_core::{spawn_event_converter, Credential, SshGame, SshSession};
 use std::sync::Arc;
 use std::time::Duration;

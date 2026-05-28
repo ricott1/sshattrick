@@ -1,7 +1,7 @@
+use crate::geom::Rect;
 use crate::types::Palette;
 use glam::{U16Vec2, Vec2};
 use image::RgbaImage;
-use ratatui::layout::Rect;
 use std::{
     collections::{hash_map::Iter, HashMap},
     fmt::Debug,
