@@ -13,12 +13,12 @@ categories = ["games"]
 [dependencies]
 anyhow = "1.0.102"
 directories = "6.0.0"
-glam = "0.32.1"
+glam = "0.33.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 include_dir = "0.7.4"
 log = "0.4.27"
 rand = { version = "0.10.1", default-features = false, features = ["std", "std_rng", "thread_rng"] }
-uuid = { version = "1.23.1", default-features = false, features = ["v4", "fast-rng"] }
+uuid = { version = "1.23.1", default-features = false, features = ["v4"] }
 
 [dev-dependencies]
 crossterm = { version = "0.29", default-features = false, features = ["events"] }
